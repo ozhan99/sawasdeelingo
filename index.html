@@ -196,35 +196,64 @@
         window.speechSynthesis.onvoiceschanged = loadVoices;
       }
 
-      function speak(thaiText, slow = false) {
-        SoundFX.pop();
-        if (!('speechSynthesis' in window)) {
-          if (!warnedNoVoice) {
-            showToast('Spraak niet ondersteund in deze browser — gebruik de fonetische uitspraak.', 'info');
-            warnedNoVoice = true;
-          }
-          return false;
+      let activeTtsAudio = null;
+
+function speak(thaiText, slow = false) {
+  if (!thaiText) return;
+  const clean = thaiText.replace(/[\(\)\[\]]/g, '').trim();
+  const rate = slow ? 0.65 : 0.85;
+
+  // 1. Probeer Web Speech API (indien de browser/omgeving het toelaat)
+  if ('speechSynthesis' in window && window.SpeechSynthesisUtterance) {
+    try {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(clean);
+      u.lang = 'th-TH';
+      u.rate = rate;
+      let spoken = false;
+      u.onstart = () => { spoken = true; };
+      u.onerror = () => { playAudioFallback(clean, slow); };
+      window.speechSynthesis.speak(u);
+      setTimeout(() => {
+        if (!spoken && !window.speechSynthesis.speaking) {
+          playAudioFallback(clean, slow);
         }
-        try {
-          loadVoices();
-          window.speechSynthesis.cancel();
-          const clean = thaiText.replace(/\[.*?\]/g, '').trim();
-          const utter = new SpeechSynthesisUtterance(clean);
-          utter.lang = 'th-TH';
-          if (thaiVoice) {
-            utter.voice = thaiVoice;
-          } else if (checkedVoices && !warnedNoVoice) {
-            showToast('Geen Thaise stem geïnstalleerd op dit apparaat — lees de fonetiek mee!', 'info');
-            warnedNoVoice = true;
-          }
-          utter.rate = slow ? 0.58 : 0.9;
-          utter.pitch = 1.0;
-          window.speechSynthesis.speak(utter);
-          return true;
-        } catch (e) {
-          return false;
-        }
+      }, 350);
+      return;
+    } catch (e) {
+      // Schakel direct door naar fallback bij fouten
+    }
+  }
+
+  // 2. Directe audio stream fallback (werkt gegarandeerd in Android WebView)
+  playAudioFallback(clean, slow);
+}
+
+function playAudioFallback(text, slow) {
+  try {
+    if (activeTtsAudio) {
+      activeTtsAudio.pause();
+      activeTtsAudio = null;
+    }
+    const url = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=th&q=${encodeURIComponent(text)}`;
+    activeTtsAudio = new Audio(url);
+    if (slow) {
+      activeTtsAudio.playbackRate = 0.75;
+    }
+    activeTtsAudio.play().catch(err => {
+      if (typeof showToast === 'function') {
+        showToast('Audio vereist een actieve internetverbinding.');
       }
+    });
+  } catch (err) {
+    if (typeof showToast === 'function') {
+      showToast('Spraak niet beschikbaar.');
+    }
+  }
+}
+
+// Veiligheids-alias: mocht een onderdeel toch speakThai() aanroepen
+const speakThai = speak;
 
       function hasThaiVoice() {
         loadVoices();
