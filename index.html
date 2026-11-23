@@ -1,0 +1,3005 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#58CC02" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <title>SawasdeeLingo — Leer Thais in Duolingo-stijl</title>
+
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Google Fonts: Nunito (speels & Duolingo-stijl) + Noto Sans Thai (scherp Thais schrift) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&family=Nunito:wght@500;600;700;800;900&display=swap" rel="stylesheet" />
+
+  <style>
+    /* Basislettertypen & mobiele touch-optimalisatie */
+    * {
+      -webkit-tap-highlight-color: transparent;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Nunito', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: #f1f5f9;
+      color: #1e293b;
+      margin: 0;
+      padding: 0;
+      overflow-x: hidden;
+    }
+
+    .thai-text {
+      font-family: 'Noto Sans Thai', 'Nunito', sans-serif;
+      line-height: 1.5;
+    }
+
+    /* Duolingo 3D-knop stijl */
+    .duo-btn {
+      transition: transform 0.08s ease, border-bottom-width 0.08s ease, background-color 0.15s ease;
+      user-select: none;
+    }
+    .duo-btn:active:not(:disabled) {
+      transform: translateY(3px);
+    }
+
+    /* Animaties voor feedback, combo en mascotte */
+    @keyframes bounceIn {
+      0% { transform: scale(0.85); opacity: 0; }
+      60% { transform: scale(1.05); opacity: 1; }
+      100% { transform: scale(1); }
+    }
+    .animate-bounce-in {
+      animation: bounceIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-6px); }
+      40% { transform: translateX(6px); }
+      60% { transform: translateX(-4px); }
+      80% { transform: translateX(4px); }
+    }
+    .animate-shake {
+      animation: shake 0.35s ease;
+    }
+
+    @keyframes floatSlow {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-5px); }
+    }
+    .animate-float {
+      animation: floatSlow 2.8s ease-in-out infinite;
+    }
+
+    @keyframes pulseRing {
+      0% { box-shadow: 0 0 0 0 rgba(88, 204, 2, 0.45); }
+      70% { box-shadow: 0 0 0 14px rgba(88, 204, 2, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(88, 204, 2, 0); }
+    }
+    .pulse-active {
+      animation: pulseRing 2s infinite;
+    }
+
+    @keyframes confettiFall {
+      0% { transform: translateY(-20px) rotate(0deg); opacity: 1; }
+      100% { transform: translateY(120px) rotate(360deg); opacity: 0; }
+    }
+
+    /* Verberg scrollbars maar behoud vloeiend scrollen */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen flex justify-center">
+
+  <!-- Mobiele App Container (gecentreerd op desktop, volledig scherm op telefoon) -->
+  <div id="app" class="w-full max-w-md min-h-screen bg-white shadow-2xl relative flex flex-col overflow-x-hidden">
+    <!-- Inhoud wordt dynamisch gerenderd door JavaScript -->
+  </div>
+
+  <!-- Zwevende melding (Toast) ter vervanging van alert() -->
+  <div id="toast-container" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-11/12 max-w-sm pointer-events-none flex flex-col gap-2"></div>
+
+  <!-- Modale container voor Taaltips, Rondleiding, Instellingen, Reset, Export/Import -->
+  <div id="modal-root" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4"></div>
+
+  <script>
+    /* ============================================================================
+     * SAWASDEELINGO — VOLLEDIGE THAISE TAALLEERAPP VOOR NEDERLANDSTALIGEN
+     * Architectuur:
+     * 1. Geluidseffecten (Web Audio API) & Thaise Spraaksynthese (Web Speech API)
+     * 2. Authentieke 20-Niveaus Leerstoflijst (Woorden + Zinnen + Didactische Tips)
+     * 3. Spaced Repetition System (Leitner Box 0-5) & LocalStorage State Manager
+     * 4. Dynamische Opdracht- & Examen-generator (10 opdrachten/niveau, 8+ oefeningen)
+     * 5. Reactieve UI-Renderer (Leren, Herhalen, Woorden, Profiel, Les-engine, Tour)
+     * ============================================================================ */
+
+    // -------------------------
+    // 1. GELUID & SPRAAK ENGINE
+    // -------------------------
+    const SoundFX = (() => {
+      let ctx = null;
+      function getCtx() {
+        if (!ctx) {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (AudioCtx) ctx = new AudioCtx();
+        }
+        if (ctx && ctx.state === 'suspended') {
+          ctx.resume().catch(() => {});
+        }
+        return ctx;
+      }
+
+      function playTone(freq, startOffset, duration, type = 'sine', gainVal = 0.14) {
+        if (!AppState.settings.soundOn) return;
+        try {
+          const ac = getCtx();
+          if (!ac) return;
+          const osc = ac.createOscillator();
+          const gain = ac.createGain();
+          osc.type = type;
+          osc.frequency.setValueAtTime(freq, ac.currentTime + startOffset);
+          gain.gain.setValueAtTime(0.001, ac.currentTime + startOffset);
+          gain.gain.exponentialRampToValueAtTime(gainVal, ac.currentTime + startOffset + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + startOffset + duration);
+          osc.connect(gain);
+          gain.connect(ac.destination);
+          osc.start(ac.currentTime + startOffset);
+          osc.stop(ac.currentTime + startOffset + duration + 0.02);
+        } catch (e) {}
+      }
+
+      return {
+        correct() {
+          playTone(523.25, 0, 0.12, 'triangle', 0.18); // C5
+          playTone(659.25, 0.09, 0.14, 'triangle', 0.18); // E5
+          playTone(783.99, 0.18, 0.22, 'triangle', 0.18); // G5
+        },
+        wrong() {
+          playTone(230, 0, 0.14, 'sawtooth', 0.09);
+          playTone(185, 0.12, 0.22, 'sawtooth', 0.09);
+        },
+        pop() {
+          playTone(640, 0, 0.06, 'sine', 0.1);
+        },
+        complete() {
+          const notes = [523.25, 659.25, 783.99, 1046.5];
+          notes.forEach((n, i) => playTone(n, i * 0.1, 0.25, 'triangle', 0.18));
+        },
+        fail() {
+          playTone(349.23, 0, 0.18, 'sine', 0.12);
+          playTone(311.13, 0.16, 0.18, 'sine', 0.12);
+          playTone(261.63, 0.32, 0.32, 'sine', 0.12);
+        }
+      };
+    })();
+
+    // Web Speech API voor Thais (met slimme fallback als th-TH stem ontbreekt)
+    const SpeechEngine = (() => {
+      let thaiVoice = null;
+      let checkedVoices = false;
+      let warnedNoVoice = false;
+
+      function loadVoices() {
+        if (!('speechSynthesis' in window)) return;
+        const voices = window.speechSynthesis.getVoices() || [];
+        thaiVoice = voices.find(v => v.lang && v.lang.toLowerCase().startsWith('th')) || null;
+        if (voices.length > 0) checkedVoices = true;
+      }
+
+      if ('speechSynthesis' in window) {
+        loadVoices();
+        window.speechSynthesis.onvoiceschanged = loadVoices;
+      }
+
+      function speak(thaiText, slow = false) {
+        SoundFX.pop();
+        if (!('speechSynthesis' in window)) {
+          if (!warnedNoVoice) {
+            showToast('Spraak niet ondersteund in deze browser — gebruik de fonetische uitspraak.', 'info');
+            warnedNoVoice = true;
+          }
+          return false;
+        }
+        try {
+          loadVoices();
+          window.speechSynthesis.cancel();
+          const clean = thaiText.replace(/\[.*?\]/g, '').trim();
+          const utter = new SpeechSynthesisUtterance(clean);
+          utter.lang = 'th-TH';
+          if (thaiVoice) {
+            utter.voice = thaiVoice;
+          } else if (checkedVoices && !warnedNoVoice) {
+            showToast('Geen Thaise stem geïnstalleerd op dit apparaat — lees de fonetiek mee!', 'info');
+            warnedNoVoice = true;
+          }
+          utter.rate = slow ? 0.58 : 0.9;
+          utter.pitch = 1.0;
+          window.speechSynthesis.speak(utter);
+          return true;
+        } catch (e) {
+          return false;
+        }
+      }
+
+      function hasThaiVoice() {
+        loadVoices();
+        return !!thaiVoice;
+      }
+
+      return { speak, hasThaiVoice };
+    })();
+
+    // -------------------------
+    // 2. CURRICULUM: 20 VOLLEDIGE NIVEAUS (AUTHENTIEK THAIS -> NEDERLANDS)
+    // Placeholders:
+    // {P} -> ครับ (man) / ค่ะ (vrouw)
+    // {p} -> khrap (man) / kha (vrouw)
+    // {I} -> ผม (man) / ฉัน (vrouw)
+    // {i} -> phom (man) / chan (vrouw)
+    // -------------------------
+    const LEVELS = [
+      {
+        id: 1,
+        title: 'Begroetingen & Beleefdheid',
+        subtitle: 'De belangrijkste woorden vanaf minuut één in Thailand',
+        icon: '🙏',
+        color: { bg: '#58CC02', dark: '#46A302', light: '#EAFAD9', text: '#2F6F00' },
+        tipTitle: 'Beleefdheid: ครับ (khrap) & ค่ะ (kha)',
+        tipContent: 'In het Thais sluit je zinnen beleefd af met een slotwoord: mannen zeggen <b>ครับ (khrap)</b> en vrouwen zeggen <b>ค่ะ (kha)</b>. Bij een vraag maken vrouwen de toon iets hoger (คะ). Gebruik de schakelaar bovenin om de hele app op jouw vorm in te stellen! Let op: het Thais is een toontaal (5 tonen: midden, laag, dalend, hoog, stijgend). Luister goed naar de melodie.',
+        words: [
+          { id: 'w1_1', th: 'สวัสดี{P}', ph: 'sa-wat-die {p}', tone: 'laag - laag - midden', nl: 'Hallo / Goedendag', note: 'Altijd goed, op elk moment van de dag' },
+          { id: 'w1_2', th: 'ขอบคุณ{P}', ph: 'khop-khoen {p}', tone: 'laag - midden', nl: 'Dank je wel', note: 'Voeg maak (มาก) toe voor "heel erg bedankt"' },
+          { id: 'w1_3', th: 'ขอโทษ{P}', ph: 'khoo-thoot {p}', tone: 'stijgend - dalend', nl: 'Sorry / Pardon', note: 'Ook om aandacht te vragen' },
+          { id: 'w1_4', th: 'ไม่เป็นไร{P}', ph: 'mai pen rai {p}', tone: 'dalend - midden - midden', nl: 'Geen probleem / Graag gedaan', note: 'De beroemde Thaise levenshouding!' },
+          { id: 'w1_5', th: 'ใช่{P}', ph: 'tsjai {p}', tone: 'dalend', nl: 'Ja / Klopt', note: 'Gebruik als bevestiging' },
+          { id: 'w1_6', th: 'ไม่ใช่{P}', ph: 'mai tsjai {p}', tone: 'dalend - dalend', nl: 'Nee / Klopt niet', note: 'Mai (ไม่) maakt iets ontkennend' },
+          { id: 'w1_7', th: 'ลาก่อน{P}', ph: 'laa kon {p}', tone: 'midden - laag', nl: 'Tot ziens / Dag', note: 'Formeel afscheid; vaak zegt men ook sawatdie' },
+          { id: 'w1_8', th: 'ขอบคุณมาก{P}', ph: 'khop-khoen maak {p}', tone: 'laag - midden - dalend', nl: 'Heel erg bedankt', note: 'Maak betekent "veel / erg"' }
+        ],
+        sentences: [
+          { id: 's1_1', th: 'สวัสดี {P}', ph: 'sa-wat-die {p}', nl: 'Hallo (beleefd)', tokens: ['สวัสดี', '{P}'], blankIdx: 0 },
+          { id: 's1_2', th: 'ขอบคุณ มาก {P}', ph: 'khop-khoen maak {p}', nl: 'Heel erg bedankt', tokens: ['ขอบคุณ', 'มาก', '{P}'], blankIdx: 1 },
+          { id: 's1_3', th: 'ขอโทษ {P} ไม่เป็นไร {P}', ph: 'khoo-thoot {p}, mai pen rai {p}', nl: 'Sorry — Geen probleem', tokens: ['ขอโทษ', '{P}', 'ไม่เป็นไร'], blankIdx: 2 },
+          { id: 's1_4', th: 'ใช่ {P} ขอบคุณ {P}', ph: 'tsjai {p}, khop-khoen {p}', nl: 'Ja, dank je wel', tokens: ['ใช่', '{P}', 'ขอบคุณ'], blankIdx: 0 },
+          { id: 's1_5', th: 'ไม่ใช่ {P} ขอโทษ {P}', ph: 'mai tsjai {p}, khoo-thoot {p}', nl: 'Nee, sorry', tokens: ['ไม่ใช่', '{P}', 'ขอโทษ'], blankIdx: 0 }
+        ]
+      },
+      {
+        id: 2,
+        title: 'Jezelf Voorstellen & Basisgesprek',
+        subtitle: 'Zeggen wie je bent, waar je vandaan komt en vragen hoe het gaat',
+        icon: '👋',
+        color: { bg: '#1CB0F6', dark: '#1899D6', light: '#E1F5FE', text: '#0B6998' },
+        tipTitle: 'Ik (ผม / ฉัน) & Vragen met ไหม (mai)',
+        tipContent: 'Mannen gebruiken voor "ik" meestal <b>ผม (phom)</b> en vrouwen <b>ฉัน (tsjan)</b>. Voor "jij/u" gebruik je beleefd <b>คุณ (khoen)</b>. Een ja/nee-vraag maak je heel simpel door <b>ไหม (mai, stijgende toon)</b> achteraan de zin te zetten!',
+        words: [
+          { id: 'w2_1', th: '{I}', ph: '{i}', tone: 'stijgend / hoog', nl: 'Ik', note: 'Man: phom (ผม), Vrouw: tsjan (ฉัน)' },
+          { id: 'w2_2', th: 'คุณ', ph: 'khoen', tone: 'midden', nl: 'Jij / U', note: 'Beleefde aanspreekvorm' },
+          { id: 'w2_3', th: 'ชื่อ', ph: 'tsjuu', tone: 'dalend', nl: 'Heten / Naam', note: 'Letterlijk: naam hebben' },
+          { id: 'w2_4', th: 'สบายดีไหม{P}', ph: 'sa-baai die mai {p}', tone: 'laag - midden - midden - stijgend', nl: 'Hoe gaat het?', note: 'Letterlijk: ben je comfortabel goed?' },
+          { id: 'w2_5', th: 'สบายดี{P}', ph: 'sa-baai die {p}', tone: 'laag - midden - midden', nl: 'Het gaat goed', note: 'Standaard antwoord op sa-baai die mai' },
+          { id: 'w2_6', th: 'มาจาก', ph: 'maa djaak', tone: 'midden - laag', nl: 'Komen uit', note: 'Maa = komen, djaak = vanuit' },
+          { id: 'w2_7', th: 'เนเธอร์แลนด์', ph: 'nee-theu-len', tone: 'midden - midden - midden', nl: 'Nederland', note: 'Ook wel: ฮอลแลนด์ (hon-len)' },
+          { id: 'w2_8', th: 'ยินดีที่ได้รู้จัก{P}', ph: 'jin-die thie dai roe-djak {p}', tone: 'midden - midden - dalend - dalend - hoog - laag', nl: 'Aangenaam kennis te maken', note: 'Een warme begroeting bij voorstellen' },
+          { id: 'w2_9', th: 'ไม่เข้าใจ{P}', ph: 'mai khau-djai {p}', tone: 'dalend - dalend - midden', nl: 'Ik begrijp het niet', note: 'Superhandig als iemand snel praat!' }
+        ],
+        sentences: [
+          { id: 's2_1', th: '{I} ชื่อ ... {P}', ph: '{i} tsjuu ... {p}', nl: 'Ik heet ...', tokens: ['{I}', 'ชื่อ', '{P}'], blankIdx: 1 },
+          { id: 's2_2', th: '{I} มาจาก เนเธอร์แลนด์ {P}', ph: '{i} maa djaak nee-theu-len {p}', nl: 'Ik kom uit Nederland', tokens: ['{I}', 'มาจาก', 'เนเธอร์แลนด์', '{P}'], blankIdx: 1 },
+          { id: 's2_3', th: 'คุณ สบายดีไหม {P}', ph: 'khoen sa-baai die mai {p}', nl: 'Hoe gaat het met jou?', tokens: ['คุณ', 'สบายดีไหม', '{P}'], blankIdx: 1 },
+          { id: 's2_4', th: '{I} สบายดี ขอบคุณ {P}', ph: '{i} sa-baai die khop-khoen {p}', nl: 'Met mij gaat het goed, dank je', tokens: ['{I}', 'สบายดี', 'ขอบคุณ', '{P}'], blankIdx: 1 },
+          { id: 's2_5', th: 'ขอโทษ {P} {I} ไม่เข้าใจ', ph: 'khoo-thoot {p}, {i} mai khau-djai', nl: 'Sorry, ik begrijp het niet', tokens: ['ขอโทษ', '{I}', 'ไม่เข้าใจ'], blankIdx: 2 }
+        ]
+      },
+      {
+        id: 3,
+        title: 'Getallen 1-100 & Prijzen',
+        subtitle: 'Tellen, bedragen verstaan en vragen wat iets kost in Baht',
+        icon: '💰',
+        color: { bg: '#FFC800', dark: '#D9A600', light: '#FFF8D6', text: '#8C6800' },
+        tipTitle: 'Slim tellen in het Thais',
+        tipContent: 'Thaise getallen zijn logisch opgebouwd! 10 is <b>สิบ (sip)</b>. 11 is sip-et, 12 is sip-song. Voor 20 zeg je een uitzondering: <b>ยี่สิบ (jie-sip)</b>. Daarna is het regelmatig: 30 = saam-sip, 50 = haa-sip, 100 = neung-roi. De munteenheid is <b>บาท (baat)</b>.',
+        words: [
+          { id: 'w3_1', th: 'หนึ่ง', ph: 'neung', tone: 'laag', nl: '1 (één)' },
+          { id: 'w3_2', th: 'สอง', ph: 'song', tone: 'stijgend', nl: '2 (twee)' },
+          { id: 'w3_3', th: 'สาม', ph: 'saam', tone: 'stijgend', nl: '3 (drie)' },
+          { id: 'w3_4', th: 'สี่', ph: 'sie', tone: 'laag', nl: '4 (vier)' },
+          { id: 'w3_5', th: 'ห้า', ph: 'haa', tone: 'dalend', nl: '5 (vijf)', note: '555 in Thai chat betekent "hahaha"!' },
+          { id: 'w3_6', th: 'สิบ', ph: 'sip', tone: 'laag', nl: '10 (tien)' },
+          { id: 'w3_7', th: 'ยี่สิบ', ph: 'jie-sip', tone: 'dalend - laag', nl: '20 (twintig)' },
+          { id: 'w3_8', th: 'ห้าสิบ', ph: 'haa-sip', tone: 'dalend - laag', nl: '50 (vijftig)' },
+          { id: 'w3_9', th: 'หนึ่งร้อย', ph: 'neung-roi', tone: 'laag - hoog', nl: '100 (honderd)' },
+          { id: 'w3_10', th: 'เท่าไหร่{P}', ph: 'thau-rai {p}', tone: 'dalend - laag', nl: 'Hoeveel kost het?', note: 'Onmisbaar op de markt!' },
+          { id: 'w3_11', th: 'บาท', ph: 'baat', tone: 'laag', nl: 'Baht (Thaise munt)' }
+        ],
+        sentences: [
+          { id: 's3_1', th: 'อันนี้ เท่าไหร่ {P}', ph: 'an-nie thau-rai {p}', nl: 'Hoeveel kost dit?', tokens: ['อันนี้', 'เท่าไหร่', '{P}'], blankIdx: 1 },
+          { id: 's3_2', th: 'ห้าสิบ บาท {P}', ph: 'haa-sip baat {p}', nl: 'Vijftig Baht', tokens: ['ห้าสิบ', 'บาท', '{P}'], blankIdx: 0 },
+          { id: 's3_3', th: 'หนึ่งร้อย บาท {P}', ph: 'neung-roi baat {p}', nl: 'Honderd Baht', tokens: ['หนึ่งร้อย', 'บาท', '{P}'], blankIdx: 0 },
+          { id: 's3_4', th: 'ยี่สิบ ห้า บาท', ph: 'jie-sip haa baat', nl: 'Vijfentwintig Baht', tokens: ['ยี่สิบ', 'ห้า', 'บาท'], blankIdx: 1 },
+          { id: 's3_5', th: 'ขอ สาม อัน {P}', ph: 'khoo saam an {p}', nl: 'Mag ik er drie, alstublieft?', tokens: ['ขอ', 'สาม', 'อัน', '{P}'], blankIdx: 1 }
+        ]
+      },
+      {
+        id: 4,
+        title: 'Streetfood & Eten Bestellen',
+        subtitle: 'Heerlijk Thais bestellen zonder onverwachte chili-verrassingen',
+        icon: '🍜',
+        color: { bg: '#FF9600', dark: '#D97B00', light: '#FFF2DC', text: '#995300' },
+        tipTitle: 'Mai phet (ไม่เผ็ด) redt je smaakpapillen!',
+        tipContent: 'In het Thais staat het bijvoeglijk naamwoord <b>achter</b> het zelfstandig naamwoord: <i>khao phat kai</i> = rijst + gebakken + kip. Wil je niet pittig? Zeg <b>ไม่เผ็ด (mai phet)</b>. Een beetje pittig is <i>phet nit-noi</i>. En vergeet het grootste compliment aan de kok niet: <b>อร่อยมาก (a-roi maak)</b>!',
+        words: [
+          { id: 'w4_1', th: 'กิน', ph: 'kin', tone: 'midden', nl: 'Eten (werkwoord)' },
+          { id: 'w4_2', th: 'ข้าว', ph: 'khaau', tone: 'dalend', nl: 'Rijst', note: 'Basis van bijna elke Thaise maaltijd' },
+          { id: 'w4_3', th: 'ก๋วยเตี๋ยว', ph: 'koeai-tiau', tone: 'stijgend - stijgend', nl: 'Noedels / Noedelsoep' },
+          { id: 'w4_4', th: 'ไก่', ph: 'kai', tone: 'laag', nl: 'Kip' },
+          { id: 'w4_5', th: 'หมู', ph: 'moe', tone: 'stijgend', nl: 'Varkensvlees' },
+          { id: 'w4_6', th: 'ผัก', ph: 'phak', tone: 'laag', nl: 'Groenten' },
+          { id: 'w4_7', th: 'เผ็ด', ph: 'phet', tone: 'laag', nl: 'Pittig / Scherp' },
+          { id: 'w4_8', th: 'ไม่เผ็ด', ph: 'mai phet', tone: 'dalend - laag', nl: 'Niet pittig', note: 'Essentieel op vakantie!' },
+          { id: 'w4_9', th: 'อร่อย', ph: 'a-roi', tone: 'laag - laag', nl: 'Lekker' },
+          { id: 'w4_10', th: 'ข้าวผัด', ph: 'khaau phat', tone: 'dalend - laag', nl: 'Gebakken rijst' }
+        ],
+        sentences: [
+          { id: 's4_1', th: 'ขอ ข้าวผัด ไก่ {P}', ph: 'khoo khaau phat kai {p}', nl: 'Mag ik gebakken rijst met kip?', tokens: ['ขอ', 'ข้าวผัด', 'ไก่', '{P}'], blankIdx: 1 },
+          { id: 's4_2', th: 'ไม่เผ็ด {P}', ph: 'mai phet {p}', nl: 'Niet pittig alstublieft', tokens: ['ไม่เผ็ด', '{P}'], blankIdx: 0 },
+          { id: 's4_3', th: 'อร่อย มาก {P}', ph: 'a-roi maak {p}', nl: 'Heel erg lekker!', tokens: ['อร่อย', 'มาก', '{P}'], blankIdx: 0 },
+          { id: 's4_4', th: 'ขอ ก๋วยเตี๋ยว หมู ไม่เผ็ด', ph: 'khoo koeai-tiau moe mai phet', nl: 'Mag ik noedels met varkensvlees, niet pittig?', tokens: ['ขอ', 'ก๋วยเตี๋ยว', 'หมู', 'ไม่เผ็ด'], blankIdx: 1 },
+          { id: 's4_5', th: '{I} กิน ผัก {P}', ph: '{i} kin phak {p}', nl: 'Ik eet groenten', tokens: ['{I}', 'กิน', 'ผัก', '{P}'], blankIdx: 2 }
+        ]
+      },
+      {
+        id: 5,
+        title: 'Drinken & Café',
+        subtitle: 'Verkoelende drankjes bestellen en om de rekening vragen',
+        icon: '🥥',
+        color: { bg: '#CE82FF', dark: '#A55CE0', light: '#F6E8FF', text: '#6D28A8' },
+        tipTitle: 'IJs, suiker & afrekenen',
+        tipContent: 'Thaise koffie en thee worden standaard erg zoet gemaakt! Voeg <b>ไม่หวาน (mai waan)</b> toe voor "niet zoet" of <b>ไม่ใส่น้ำตาล (mai sai nam-taan)</b> voor "zonder suiker". Om de rekening te vragen zeggen bijna alle Thai informeel en vriendelijk <b>เก็บเงิน (kep ngeun)</b> of <b>เช็คบิล (tsjek bin)</b>.',
+        words: [
+          { id: 'w5_1', th: 'น้ำเปล่า', ph: 'nam plaau', tone: 'hoog - laag', nl: 'Water (gewoon)', note: 'Nam = water/vloeistof' },
+          { id: 'w5_2', th: 'น้ำแข็ง', ph: 'nam kheng', tone: 'hoog - stijgend', nl: 'IJsblokjes', note: 'Letterlijk: hard water' },
+          { id: 'w5_3', th: 'กาแฟ', ph: 'kaa-fee', tone: 'midden - midden', nl: 'Koffie' },
+          { id: 'w5_4', th: 'ชา', ph: 'tsjaa', tone: 'midden', nl: 'Thee' },
+          { id: 'w5_5', th: 'เบียร์', ph: 'bia', tone: 'midden', nl: 'Bier' },
+          { id: 'w5_6', th: 'มะพร้าว', ph: 'ma-phraau', tone: 'hoog - hoog', nl: 'Kokosnoot' },
+          { id: 'w5_7', th: 'ไม่หวาน', ph: 'mai waan', tone: 'dalend - stijgend', nl: 'Niet zoet / Zonder suiker' },
+          { id: 'w5_8', th: 'เย็น', ph: 'jen', tone: 'midden', nl: 'Koud / Met ijs' },
+          { id: 'w5_9', th: 'เก็บเงิน{P}', ph: 'kep ngeun {p}', tone: 'laag - midden', nl: 'De rekening alstublieft', note: 'Letterlijk: geld ophalen' }
+        ],
+        sentences: [
+          { id: 's5_1', th: 'ขอ น้ำเปล่า หนึ่ง ขวด {P}', ph: 'khoo nam plaau neung khoeat {p}', nl: 'Mag ik één fles water?', tokens: ['ขอ', 'น้ำเปล่า', 'หนึ่ง', 'ขวด', '{P}'], blankIdx: 1 },
+          { id: 's5_2', th: 'กาแฟ เย็น ไม่หวาน {P}', ph: 'kaa-fee jen mai waan {p}', nl: 'IJskoffie zonder suiker alstublieft', tokens: ['กาแฟ', 'เย็น', 'ไม่หวาน', '{P}'], blankIdx: 2 },
+          { id: 's5_3', th: 'ขอ เบียร์ เย็น {P}', ph: 'khoo bia jen {p}', nl: 'Mag ik een koud biertje?', tokens: ['ขอ', 'เบียร์', 'เย็น', '{P}'], blankIdx: 1 },
+          { id: 's5_4', th: 'เก็บเงิน ด้วย {P}', ph: 'kep ngeun doeai {p}', nl: 'De rekening alstublieft', tokens: ['เก็บเงิน', 'ด้วย', '{P}'], blankIdx: 0 },
+          { id: 's5_5', th: 'น้ำ มะพร้าว อร่อย มาก', ph: 'nam ma-phraau a-roi maak', nl: 'Kokoswater is heel lekker', tokens: ['น้ำ', 'มะพร้าว', 'อร่อย', 'มาก'], blankIdx: 1 }
+        ]
+      },
+      {
+        id: 6,
+        title: 'Winkelen & Afdingen',
+        subtitle: 'Vriendelijk onderhandelen op de avondmarkt in Bangkok of Chiang Mai',
+        icon: '🛍️',
+        color: { bg: '#FF4B4B', dark: '#D63030', light: '#FFE5E5', text: '#9E1B1B' },
+        tipTitle: 'Glimlachend afdingen',
+        tipContent: 'Op Thaise markten mag je afdingen, maar doe dit altijd met een glimlach en beleefdheid! Zeg vriendelijk <b>ลดได้ไหม (lot dai mai)</b> — "kan er korting af?". In warenhuizen, 7-Eleven en restaurants staan prijzen vast.',
+        words: [
+          { id: 'w6_1', th: 'ซื้อ', ph: 'suu', tone: 'hoog', nl: 'Kopen' },
+          { id: 'w6_2', th: 'แพง', ph: 'pheeng', tone: 'midden', nl: 'Duur' },
+          { id: 'w6_3', th: 'ถูก', ph: 'thoek', tone: 'laag', nl: 'Goedkoop' },
+          { id: 'w6_4', th: 'ลดได้ไหม{P}', ph: 'lot dai mai {p}', tone: 'hoog - dalend - stijgend', nl: 'Kan er korting af?' },
+          { id: 'w6_5', th: 'ใหญ่', ph: 'jai', tone: 'laag', nl: 'Groot' },
+          { id: 'w6_6', th: 'เล็ก', ph: 'lek', tone: 'hoog', nl: 'Klein' },
+          { id: 'w6_7', th: 'ถุง', ph: 'thoeng', tone: 'stijgend', nl: 'Tas / Zakje' },
+          { id: 'w6_8', th: 'สี', ph: 'sie', tone: 'stijgend', nl: 'Kleur' },
+          { id: 'w6_9', th: 'ขอดูหน่อย{P}', ph: 'khoo doe noi {p}', tone: 'stijgend - midden - laag', nl: 'Mag ik even kijken?' }
+        ],
+        sentences: [
+          { id: 's6_1', th: 'แพง ไป หน่อย {P}', ph: 'pheeng pai noi {p}', nl: 'Het is een beetje te duur', tokens: ['แพง', 'ไป', 'หน่อย', '{P}'], blankIdx: 0 },
+          { id: 's6_2', th: 'ลดได้ไหม {P}', ph: 'lot dai mai {p}', nl: 'Kunt u korting geven?', tokens: ['ลดได้ไหม', '{P}'], blankIdx: 0 },
+          { id: 's6_3', th: 'ไม่ เอา ถุง {P}', ph: 'mai au thoeng {p}', nl: 'Ik hoef geen tasje, dank u', tokens: ['ไม่', 'เอา', 'ถุง', '{P}'], blankIdx: 2 },
+          { id: 's6_4', th: 'มี สี อื่น ไหม {P}', ph: 'mie sie uun mai {p}', nl: 'Heeft u een andere kleur?', tokens: ['มี', 'สี', 'อื่น', 'ไหม', '{P}'], blankIdx: 1 },
+          { id: 's6_5', th: '{I} อยาก ซื้อ อัน ใหญ่', ph: '{i} jaak suu an jai', nl: 'Ik wil de grote kopen', tokens: ['{I}', 'อยาก', 'ซื้อ', 'อัน', 'ใหญ่'], blankIdx: 4 }
+        ]
+      },
+      {
+        id: 7,
+        title: 'Vervoer & Richtingen',
+        subtitle: 'De weg vragen en chauffeur aanwijzingen geven in taxi of tuk-tuk',
+        icon: '🛺',
+        color: { bg: '#2B70C9', dark: '#1F559E', light: '#E3EEFC', text: '#164078' },
+        tipTitle: 'Waar is ...? (อยู่ที่ไหน)',
+        tipContent: 'Om te vragen waar iets is, zet je de plek <b>vooraan</b> en eindig je met <b>อยู่ที่ไหน (joe thie-nai)</b>. Bijvoorbeeld: <i>Hong-nam joe thie-nai?</i> (Waar is het toilet?). In de taxi is <b>จอดที่นี่ (djot thie-nie)</b> goud waard: "Stop maar hier!"',
+        words: [
+          { id: 'w7_1', th: 'แท็กซี่', ph: 'thek-sie', tone: 'hoog - dalend', nl: 'Taxi' },
+          { id: 'w7_2', th: 'ตุ๊กตุ๊ก', ph: 'toek-toek', tone: 'hoog - hoog', nl: 'Tuk-tuk' },
+          { id: 'w7_3', th: 'ซ้าย', ph: 'saai', tone: 'hoog', nl: 'Links' },
+          { id: 'w7_4', th: 'ขวา', ph: 'kwaa', tone: 'stijgend', nl: 'Rechts' },
+          { id: 'w7_5', th: 'ตรงไป', ph: 'trong pai', tone: 'midden - midden', nl: 'Rechtdoor' },
+          { id: 'w7_6', th: 'จอดที่นี่{P}', ph: 'djot thie-nie {p}', tone: 'laag - dalend - dalend', nl: 'Stop hier alstublieft' },
+          { id: 'w7_7', th: 'สนามบิน', ph: 'sa-naam bin', tone: 'laag - stijgend - midden', nl: 'Vliegveld' },
+          { id: 'w7_8', th: 'อยู่ที่ไหน{P}', ph: 'joe thie-nai {p}', tone: 'laag - dalend - stijgend', nl: 'Waar is ...?' },
+          { id: 'w7_9', th: 'ห้องน้ำ', ph: 'hong-nam', tone: 'dalend - hoog', nl: 'Toilet / Badkamer' }
+        ],
+        sentences: [
+          { id: 's7_1', th: 'ห้องน้ำ อยู่ที่ไหน {P}', ph: 'hong-nam joe thie-nai {p}', nl: 'Waar is het toilet?', tokens: ['ห้องน้ำ', 'อยู่ที่ไหน', '{P}'], blankIdx: 0 },
+          { id: 's7_2', th: 'ไป สนามบิน {P}', ph: 'pai sa-naam bin {p}', nl: 'Naar het vliegveld alstublieft', tokens: ['ไป', 'สนามบิน', '{P}'], blankIdx: 1 },
+          { id: 's7_3', th: 'ตรงไป แล้ว เลี้ยว ซ้าย', ph: 'trong pai leeuw liauw saai', nl: 'Rechtdoor en dan linksaf', tokens: ['ตรงไป', 'แล้ว', 'เลี้ยว', 'ซ้าย'], blankIdx: 3 },
+          { id: 's7_4', th: 'เลี้ยว ขวา แล้ว จอดที่นี่', ph: 'liauw kwaa leeuw djot thie-nie', nl: 'Rechtsaf en dan hier stoppen', tokens: ['เลี้ยว', 'ขวา', 'แล้ว', 'จอดที่นี่'], blankIdx: 1 },
+          { id: 's7_5', th: 'ไป แท็กซี่ เท่าไหร่ {P}', ph: 'pai thek-sie thau-rai {p}', nl: 'Hoeveel kost het met de taxi?', tokens: ['ไป', 'แท็กซี่', 'เท่าไหร่', '{P}'], blankIdx: 1 }
+        ]
+      },
+      {
+        id: 8,
+        title: 'Hotel & Verblijf',
+        subtitle: 'Inchecken, wifi-wachtwoord vragen en kamerwensen doorgeven',
+        icon: '🏨',
+        color: { bg: '#00CD9C', dark: '#00A37C', light: '#DCFBF3', text: '#006B51' },
+        tipTitle: 'Handige hotelwoorden',
+        tipContent: 'Het woord <b>ห้อง (hong)</b> betekent "kamer". Zo krijg je <i>hong-nam</i> (waterkamer = toilet), <i>hong-non</i> (slaapkamer) en <i>hong-phak</i> (hotelkamer). Met <b>มี ... ไหม (mie ... mai)</b> vraag je overal naar: "Heeft u ...?"',
+        words: [
+          { id: 'w8_1', th: 'โรงแรม', ph: 'rong-reem', tone: 'midden - midden', nl: 'Hotel' },
+          { id: 'w8_2', th: 'ห้อง', ph: 'hong', tone: 'dalend', nl: 'Kamer' },
+          { id: 'w8_3', th: 'กุญแจ', ph: 'koen-djee', tone: 'midden - midden', nl: 'Sleutel' },
+          { id: 'w8_4', th: 'แอร์', ph: 'ee', tone: 'midden', nl: 'Airco' },
+          { id: 'w8_5', th: 'ไวไฟ', ph: 'wai-fai', tone: 'midden - midden', nl: 'Wifi' },
+          { id: 'w8_6', th: 'อาหารเช้า', ph: 'aa-haan tsjau', tone: 'midden - stijgend - hoog', nl: 'Ontbijt' },
+          { id: 'w8_7', th: 'ผ้าเช็ดตัว', ph: 'phaa tsjet toea', tone: 'dalend - hoog - midden', nl: 'Handdoek' },
+          { id: 'w8_8', th: 'สระว่ายน้ำ', ph: 'sa waai-nam', tone: 'laag - dalend - hoog', nl: 'Zwembad' },
+          { id: 'w8_9', th: 'เช็คอิน', ph: 'tsjek-in', tone: 'hoog - midden', nl: 'Inchecken' }
+        ],
+        sentences: [
+          { id: 's8_1', th: '{I} อยาก เช็คอิน {P}', ph: '{i} jaak tsjek-in {p}', nl: 'Ik wil graag inchecken', tokens: ['{I}', 'อยาก', 'เช็คอิน', '{P}'], blankIdx: 2 },
+          { id: 's8_2', th: 'มี ไวไฟ ไหม {P}', ph: 'mie wai-fai mai {p}', nl: 'Is er wifi?', tokens: ['มี', 'ไวไฟ', 'ไหม', '{P}'], blankIdx: 1 },
+          { id: 's8_3', th: 'ขอ ผ้าเช็ดตัว เพิ่ม {P}', ph: 'khoo phaa tsjet toea pheum {p}', nl: 'Mag ik een extra handdoek?', tokens: ['ขอ', 'ผ้าเช็ดตัว', 'เพิ่ม', '{P}'], blankIdx: 1 },
+          { id: 's8_4', th: 'สระว่ายน้ำ อยู่ที่ไหน {P}', ph: 'sa waai-nam joe thie-nai {p}', nl: 'Waar is het zwembad?', tokens: ['สระว่ายน้ำ', 'อยู่ที่ไหน', '{P}'], blankIdx: 0 },
+          { id: 's8_5', th: 'แอร์ ไม่ เย็น {P}', ph: 'ee mai jen {p}', nl: 'De airco is niet koud', tokens: ['แอร์', 'ไม่', 'เย็น', '{P}'], blankIdx: 0 }
+        ]
+      },
+      {
+        id: 9,
+        title: 'Tijd, Dagen & Plannen',
+        subtitle: 'Afspraken maken en vertellen wanneer iets gebeurt',
+        icon: '⏰',
+        color: { bg: '#FF70A6', dark: '#D64C82', light: '#FFE6F0', text: '#992252' },
+        tipTitle: 'Geen werkwoordvervoeging voor tijd!',
+        tipContent: 'Goed nieuws: in het Thais veranderen werkwoorden <b>niet</b> bij verleden of toekomende tijd! Een tijdswoord zoals <b>วันนี้ (vandaag)</b>, <b>พรุ่งนี้ (morgen)</b> of <b>เมื่อวาน (gisteren)</b> maakt de tijd direct duidelijk.',
+        words: [
+          { id: 'w9_1', th: 'วันนี้', ph: 'wan-nie', tone: 'midden - hoog', nl: 'Vandaag' },
+          { id: 'w9_2', th: 'พรุ่งนี้', ph: 'phroeng-nie', tone: 'dalend - hoog', nl: 'Morgen' },
+          { id: 'w9_3', th: 'เมื่อวาน', ph: 'muea-waan', tone: 'dalend - midden', nl: 'Gisteren' },
+          { id: 'w9_4', th: 'ตอนนี้', ph: 'ton-nie', tone: 'midden - hoog', nl: 'Nu' },
+          { id: 'w9_5', th: 'กี่โมง{P}', ph: 'kie mong {p}', tone: 'laag - midden', nl: 'Hoe laat?' },
+          { id: 'w9_6', th: 'ตอนเช้า', ph: 'ton tsjau', tone: 'midden - hoog', nl: 'Ochtend / \'s Ochtends' },
+          { id: 'w9_7', th: 'ตอนเย็น', ph: 'ton jen', tone: 'midden - midden', nl: 'Avond / \'s Avonds' },
+          { id: 'w9_8', th: 'สัปดาห์', ph: 'sap-daa', tone: 'laag - midden', nl: 'Week' },
+          { id: 'w9_9', th: 'เดี๋ยว', ph: 'diauw', tone: 'stijgend', nl: 'Straks / Even wachten' }
+        ],
+        sentences: [
+          { id: 's9_1', th: 'ตอนนี้ กี่โมง {P}', ph: 'ton-nie kie mong {p}', nl: 'Hoe laat is het nu?', tokens: ['ตอนนี้', 'กี่โมง', '{P}'], blankIdx: 1 },
+          { id: 's9_2', th: 'พรุ่งนี้ ไป สนามบิน', ph: 'phroeng-nie pai sa-naam bin', nl: 'Morgen ga ik naar het vliegveld', tokens: ['พรุ่งนี้', 'ไป', 'สนามบิน'], blankIdx: 0 },
+          { id: 's9_3', th: 'อาหารเช้า กี่โมง {P}', ph: 'aa-haan tsjau kie mong {p}', nl: 'Hoe laat is het ontbijt?', tokens: ['อาหารเช้า', 'กี่โมง', '{P}'], blankIdx: 1 },
+          { id: 's9_4', th: 'วันนี้ ตอนเย็น กิน ข้าว', ph: 'wan-nie ton jen kin khaau', nl: 'Vanavond gaan we eten', tokens: ['วันนี้', 'ตอนเย็น', 'กิน', 'ข้าว'], blankIdx: 1 },
+          { id: 's9_5', th: 'เมื่อวาน ไป โรงแรม', ph: 'muea-waan pai rong-reem', nl: 'Gisteren ging ik naar het hotel', tokens: ['เมื่อวาน', 'ไป', 'โรงแรม'], blankIdx: 0 }
+        ]
+      },
+      {
+        id: 10,
+        title: 'Strand, Weer & Uitstapjes',
+        subtitle: 'Genieten van Thaise eilanden, tropisch weer en mooie foto\'s',
+        icon: '🏝️',
+        color: { bg: '#0EA5E9', dark: '#0284C7', light: '#E0F2FE', text: '#075985' },
+        tipTitle: 'Praten over het weer & foto\'s maken',
+        tipContent: 'In Thailand is <b>ร้อนมาก (ron maak — erg warm!)</b> een gegarandeerde ijsbreker! Wil je vragen of iemand een foto van je maakt? Zeg beleefd: <b>ถ่ายรูปให้หน่อยได้ไหม (thaai roep hai noi dai mai)</b>.',
+        words: [
+          { id: 'w10_1', th: 'ชายหาด', ph: 'tsjaai haat', tone: 'midden - laag', nl: 'Strand' },
+          { id: 'w10_2', th: 'ทะเล', ph: 'tha-lee', tone: 'hoog - midden', nl: 'Zee' },
+          { id: 'w10_3', th: 'เกาะ', ph: 'ko', tone: 'laag', nl: 'Eiland', note: 'Zoals Koh Samui of Koh Phi Phi!' },
+          { id: 'w10_4', th: 'เรือ', ph: 'ruea', tone: 'midden', nl: 'Boot' },
+          { id: 'w10_5', th: 'ร้อน', ph: 'ron', tone: 'hoog', nl: 'Warm / Heet' },
+          { id: 'w10_6', th: 'ฝนตก', ph: 'fon tok', tone: 'stijgend - laag', nl: 'Het regent' },
+          { id: 'w10_7', th: 'แดด', ph: 'deet', tone: 'laag', nl: 'Zon / Zonneschijn' },
+          { id: 'w10_8', th: 'ว่ายน้ำ', ph: 'waai-nam', tone: 'dalend - hoog', nl: 'Zwemmen' },
+          { id: 'w10_9', th: 'ถ่ายรูป', ph: 'thaai roep', tone: 'laag - dalend', nl: 'Foto maken' }
+        ],
+        sentences: [
+          { id: 's10_1', th: 'วันนี้ ร้อน มาก {P}', ph: 'wan-nie ron maak {p}', nl: 'Het is vandaag erg warm!', tokens: ['วันนี้', 'ร้อน', 'มาก', '{P}'], blankIdx: 1 },
+          { id: 's10_2', th: 'พรุ่งนี้ ไป เกาะ', ph: 'phroeng-nie pai ko', nl: 'Morgen gaan we naar het eiland', tokens: ['พรุ่งนี้', 'ไป', 'เกาะ'], blankIdx: 2 },
+          { id: 's10_3', th: 'ไป ชายหาด ว่ายน้ำ', ph: 'pai tsjaai haat waai-nam', nl: 'Naar het strand gaan om te zwemmen', tokens: ['ไป', 'ชายหาด', 'ว่ายน้ำ'], blankIdx: 1 },
+          { id: 's10_4', th: 'ขอ ถ่ายรูป หน่อย {P}', ph: 'khoo thaai roep noi {p}', nl: 'Mag ik even een foto maken?', tokens: ['ขอ', 'ถ่ายรูป', 'หน่อย', '{P}'], blankIdx: 1 },
+          { id: 's10_5', th: 'ตอนนี้ ฝนตก ไหม', ph: 'ton-nie fon tok mai', nl: 'Regent het nu?', tokens: ['ตอนนี้', 'ฝนตก', 'ไหม'], blankIdx: 1 }
+        ]
+      },
+      {
+        id: 11,
+        title: 'Gezondheid & Noodgevallen',
+        subtitle: 'Veilig reizen: hulp vragen bij apotheek, dokter of verlies',
+        icon: '🏥',
+        color: { bg: '#EF4444', dark: '#DC2626', light: '#FEE2E2', text: '#991B1B' },
+        tipTitle: 'Hulp & allergieën duidelijk aangeven',
+        tipContent: 'Het woord <b>ช่วยด้วย (tsjoeai doeai)</b> betekent "Help!". Heb je een voedselallergie? Gebruik <b>แพ้ (phee)</b> + het ingrediënt, bijvoorbeeld <i>{i} phee thoea</i> (ik ben allergisch voor pinda\'s/noten). <b>ปวด (poeat)</b> betekent pijn.',
+        words: [
+          { id: 'w11_1', th: 'ช่วยด้วย', ph: 'tsjoeai doeai', tone: 'dalend - dalend', nl: 'Help!' },
+          { id: 'w11_2', th: 'โรงพยาบาล', ph: 'rong pha-jaa-baan', tone: 'midden - hoog - midden - midden', nl: 'Ziekenhuis' },
+          { id: 'w11_3', th: 'ร้านขายยา', ph: 'raan khaai jaa', tone: 'hoog - stijgend - midden', nl: 'Apotheek', note: 'Letterlijk: medicijn-verkoop-winkel' },
+          { id: 'w11_4', th: 'หมอ', ph: 'moo', tone: 'stijgend', nl: 'Dokter / Arts' },
+          { id: 'w11_5', th: 'ปวดท้อง', ph: 'poeat thong', tone: 'laag - hoog', nl: 'Buikpijn' },
+          { id: 'w11_6', th: 'ปวดหัว', ph: 'poeat hoea', tone: 'laag - stijgend', nl: 'Hoofdpijn' },
+          { id: 'w11_7', th: 'แพ้', ph: 'phee', tone: 'hoog', nl: 'Allergisch zijn voor' },
+          { id: 'w11_8', th: 'ตำรวจ', ph: 'tam-roeat', tone: 'midden - laag', nl: 'Politie' },
+          { id: 'w11_9', th: 'หาย', ph: 'haai', tone: 'stijgend', nl: 'Verloren / Kwijt' }
+        ],
+        sentences: [
+          { id: 's11_1', th: 'ร้านขายยา อยู่ที่ไหน {P}', ph: 'raan khaai jaa joe thie-nai {p}', nl: 'Waar is de apotheek?', tokens: ['ร้านขายยา', 'อยู่ที่ไหน', '{P}'], blankIdx: 0 },
+          { id: 's11_2', th: '{I} ปวดท้อง {P}', ph: '{i} poeat thong {p}', nl: 'Ik heb buikpijn', tokens: ['{I}', 'ปวดท้อง', '{P}'], blankIdx: 1 },
+          { id: 's11_3', th: 'ไป โรงพยาบาล {P}', ph: 'pai rong pha-jaa-baan {p}', nl: 'Naar het ziekenhuis alstublieft', tokens: ['ไป', 'โรงพยาบาล', '{P}'], blankIdx: 1 },
+          { id: 's11_4', th: 'กุญแจ หาย {P}', ph: 'koen-djee haai {p}', nl: 'De sleutel is kwijt', tokens: ['กุญแจ', 'หาย', '{P}'], blankIdx: 1 },
+          { id: 's11_5', th: '{I} อยาก พบ หมอ', ph: '{i} jaak phop moo', nl: 'Ik wil een dokter zien', tokens: ['{I}', 'อยาก', 'พบ', 'หมอ'], blankIdx: 3 }
+        ]
+      },
+      {
+        id: 12,
+        title: 'Familie & Mensen',
+        subtitle: 'Praten over familie, vrienden en reisgezelschap',
+        icon: '👨‍👩‍👧‍👦',
+        color: { bg: '#F59E0B', dark: '#D97706', light: '#FEF3C7', text: '#92400E' },
+        tipTitle: 'Ouder (พี่) & Jonger (น้อง)',
+        tipContent: 'In Thailand is leeftijd belangrijk in sociale omgang! <b>พี่ (phie)</b> gebruik je voor een oudere broer/zus, maar óók vriendelijk tegen iemand die iets ouder is (zoals een ober of chauffeur). <b>น้อง (nong)</b> is voor iemand die jonger is.',
+        words: [
+          { id: 'w12_1', th: 'พ่อ', ph: 'phoo', tone: 'dalend', nl: 'Vader' },
+          { id: 'w12_2', th: 'แม่', ph: 'mee', tone: 'dalend', nl: 'Moeder' },
+          { id: 'w12_3', th: 'ลูก', ph: 'loek', tone: 'dalend', nl: 'Kind (eigen kind)' },
+          { id: 'w12_4', th: 'พี่', ph: 'phie', tone: 'dalend', nl: 'Oudere broer / zus' },
+          { id: 'w12_5', th: 'น้อง', ph: 'nong', tone: 'hoog', nl: 'Jongere broer / zus' },
+          { id: 'w12_6', th: 'เพื่อน', ph: 'phuean', tone: 'dalend', nl: 'Vriend / Vriendin' },
+          { id: 'w12_7', th: 'ผู้ชาย', ph: 'phoe-tsjaai', tone: 'dalend - midden', nl: 'Man' },
+          { id: 'w12_8', th: 'ผู้หญิง', ph: 'phoe-jing', tone: 'dalend - stijgend', nl: 'Vrouw' },
+          { id: 'w12_9', th: 'ครอบครัว', ph: 'khrop-khroea', tone: 'dalend - midden', nl: 'Familie / Gezin' }
+        ],
+        sentences: [
+          { id: 's12_1', th: 'นี่ เพื่อน {I} {P}', ph: 'nie phuean {i} {p}', nl: 'Dit is mijn vriend', tokens: ['นี่', 'เพื่อน', '{I}', '{P}'], blankIdx: 1 },
+          { id: 's12_2', th: '{I} มา กับ ครอบครัว', ph: '{i} maa kap khrop-khroea', nl: 'Ik kom met mijn familie', tokens: ['{I}', 'มา', 'กับ', 'ครอบครัว'], blankIdx: 3 },
+          { id: 's12_3', th: 'พ่อ กับ แม่ สบายดี', ph: 'phoo kap mee sa-baai die', nl: 'Het gaat goed met vader en moeder', tokens: ['พ่อ', 'กับ', 'แม่', 'สบายดี'], blankIdx: 0 },
+          { id: 's12_4', th: '{I} มี ลูก สอง คน', ph: '{i} mie loek song khon', nl: 'Ik heb twee kinderen', tokens: ['{I}', 'มี', 'ลูก', 'สอง', 'คน'], blankIdx: 2 },
+          { id: 's12_5', th: 'พี่ สบายดีไหม {P}', ph: 'phie sa-baai die mai {p}', nl: 'Hoe gaat het (met u/oudere)?', tokens: ['พี่', 'สบายดีไหม', '{P}'], blankIdx: 0 }
+        ]
+      },
+      {
+        id: 13,
+        title: 'Dagelijkse Werkwoorden',
+        subtitle: 'De 10 krachtigste werkwoorden waarmee je honderden zinnen bouwt',
+        icon: '⚡',
+        color: { bg: '#8B5CF6', dark: '#7C3AED', light: '#EDE9FE', text: '#5B21B6' },
+        tipTitle: 'Krachtige werkwoorden zonder vervoeging',
+        tipContent: 'Thaise werkwoorden hebben <b>maar één vorm</b>! <i>ไป (pai)</i> is gaan, ik ga, jij gaat, wij gingen. Combineer <b>อยาก (jaak = willen)</b> met elk werkwoord: <i>jaak pai</i> (wil gaan), <i>jaak kin</i> (wil eten), <i>jaak non</i> (wil slapen)!',
+        words: [
+          { id: 'w13_1', th: 'ไป', ph: 'pai', tone: 'midden', nl: 'Gaan' },
+          { id: 'w13_2', th: 'มา', ph: 'maa', tone: 'midden', nl: 'Komen' },
+          { id: 'w13_3', th: 'อยาก', ph: 'jaak', tone: 'laag', nl: 'Willen (doen)' },
+          { id: 'w13_4', th: 'ได้', ph: 'dai', tone: 'dalend', nl: 'Kunnen / Mogen' },
+          { id: 'w13_5', th: 'มี', ph: 'mie', tone: 'midden', nl: 'Hebben / Er is' },
+          { id: 'w13_6', th: 'เห็น', ph: 'hen', tone: 'stijgend', nl: 'Zien' },
+          { id: 'w13_7', th: 'นอน', ph: 'non', tone: 'midden', nl: 'Slapen / Liggen' },
+          { id: 'w13_8', th: 'พูด', ph: 'phoet', tone: 'dalend', nl: 'Praten / Spreken' },
+          { id: 'w13_9', th: 'เข้าใจ', ph: 'khau-djai', tone: 'dalend - midden', nl: 'Begrijpen' },
+          { id: 'w13_10', th: 'ทำ', ph: 'tham', tone: 'midden', nl: 'Doen / Maken' }
+        ],
+        sentences: [
+          { id: 's13_1', th: '{I} อยาก ไป ทะเล', ph: '{i} jaak pai tha-lee', nl: 'Ik wil naar de zee gaan', tokens: ['{I}', 'อยาก', 'ไป', 'ทะเล'], blankIdx: 1 },
+          { id: 's13_2', th: '{I} พูด ไทย ได้ นิดหน่อย', ph: '{i} phoet thai dai nit-noi', nl: 'Ik spreek een beetje Thais', tokens: ['{I}', 'พูด', 'ไทย', 'ได้', 'นิดหน่อย'], blankIdx: 1 },
+          { id: 's13_3', th: 'คุณ เข้าใจ ไหม {P}', ph: 'khoen khau-djai mai {p}', nl: 'Begrijp je het?', tokens: ['คุณ', 'เข้าใจ', 'ไหม', '{P}'], blankIdx: 1 },
+          { id: 's13_4', th: 'ตอนนี้ {I} อยาก นอน', ph: 'ton-nie {i} jaak non', nl: 'Nu wil ik slapen', tokens: ['ตอนนี้', '{I}', 'อยาก', 'นอน'], blankIdx: 3 },
+          { id: 's13_5', th: 'คุณ ทำ อะไร {P}', ph: 'khoen tham a-rai {p}', nl: 'Wat ben je aan het doen?', tokens: ['คุณ', 'ทำ', 'อะไร', '{P}'], blankIdx: 1 }
+        ]
+      },
+      {
+        id: 14,
+        title: 'Thais Schrift & Tonen Basis',
+        subtitle: 'De eerste herkenbare Thaise tekens en veelvoorkomende borden lezen',
+        icon: '🔤',
+        color: { bg: '#10B981', dark: '#059669', light: '#D1FAE5', text: '#065F46' },
+        tipTitle: 'Thais schrift ontcijferen op straat',
+        tipContent: 'Thais wordt van links naar rechts geschreven zonder spaties tussen woorden! Begin met het herkennen van veelvoorkomende medeklinkers zoals <b>ก (k)</b>, <b>ม (m)</b>, <b>น (n)</b> en klinkers zoals <b>า (aa)</b>. Op straat zie je overal <b>เข้า (ingang)</b>, <b>ออก (uitgang)</b> en <b>เปิด/ปิด (open/dicht)</b>.',
+        words: [
+          { id: 'w14_1', th: 'ก', ph: 'ko kai (k-klank)', tone: 'midden', nl: 'Letter K (zoals in kip)' },
+          { id: 'w14_2', th: 'ม', ph: 'mo maa (m-klank)', tone: 'midden', nl: 'Letter M (zoals in paard)' },
+          { id: 'w14_3', th: 'า', ph: 'sara aa (lange aa)', tone: 'klinker', nl: 'Klinker AA (achter letter)' },
+          { id: 'w14_4', th: 'เข้า', ph: 'khau', tone: 'dalend', nl: 'Ingang / Naar binnen' },
+          { id: 'w14_5', th: 'ออก', ph: 'ok', tone: 'laag', nl: 'Uitgang / Naar buiten' },
+          { id: 'w14_6', th: 'เปิด', ph: 'peut', tone: 'laag', nl: 'Open / Openen' },
+          { id: 'w14_7', th: 'ปิด', ph: 'pit', tone: 'laag', nl: 'Dicht / Gesloten' },
+          { id: 'w14_8', th: 'ห้าม', ph: 'haam', tone: 'dalend', nl: 'Verboden (op borden)' },
+          { id: 'w14_9', th: 'ไทย', ph: 'thai', tone: 'midden', nl: 'Thais / Thailand' }
+        ],
+        sentences: [
+          { id: 's14_1', th: 'ร้าน เปิด ไหม {P}', ph: 'raan peut mai {p}', nl: 'Is de winkel open?', tokens: ['ร้าน', 'เปิด', 'ไหม', '{P}'], blankIdx: 1 },
+          { id: 's14_2', th: 'ทาง ออก อยู่ที่ไหน {P}', ph: 'thaang ok joe thie-nai {p}', nl: 'Waar is de uitgang?', tokens: ['ทาง', 'ออก', 'อยู่ที่ไหน', '{P}'], blankIdx: 1 },
+          { id: 's14_3', th: 'ห้าม ถ่ายรูป', ph: 'haam thaai roep', nl: 'Verboden foto\'s te maken', tokens: ['ห้าม', 'ถ่ายรูป'], blankIdx: 0 },
+          { id: 's14_4', th: 'วันนี้ ปิด {P}', ph: 'wan-nie pit {p}', nl: 'Vandaag gesloten', tokens: ['วันนี้', 'ปิด', '{P}'], blankIdx: 1 },
+          { id: 's14_5', th: 'ทาง เข้า อยู่ ซ้าย', ph: 'thaang khau joe saai', nl: 'De ingang is links', tokens: ['ทาง', 'เข้า', 'อยู่', 'ซ้าย'], blankIdx: 1 }
+        ]
+      },
+      {
+        id: 15,
+        title: 'Zinnen Verbinden & Vragen',
+        subtitle: 'Natuurlijke gesprekken voeren met vraagwoorden en voegwoorden',
+        icon: '❓',
+        color: { bg: '#6366F1', dark: '#4F46E5', light: '#E0E7FF', text: '#3730A3' },
+        tipTitle: 'Vraagwoorden staan vaak achteraan!',
+        tipContent: 'Anders dan in het Nederlands zet het Thais vraagwoorden zoals <b>อะไร (wat)</b> en <b>ที่ไหน (waar)</b> meestal <b>op de plek van het antwoord</b>, dus achteraan de zin! "Wat eet je?" wordt letterlijk: <i>คุณกินอะไร (khoen kin a-rai)</i> = "Jij eet wat?"',
+        words: [
+          { id: 'w15_1', th: 'และ', ph: 'le', tone: 'hoog', nl: 'En' },
+          { id: 'w15_2', th: 'แต่', ph: 'tee', tone: 'laag', nl: 'Maar' },
+          { id: 'w15_3', th: 'เพราะว่า', ph: 'phro waa', tone: 'hoog - dalend', nl: 'Omdat' },
+          { id: 'w15_4', th: 'หรือ', ph: 'ruu', tone: 'stijgend', nl: 'Of' },
+          { id: 'w15_5', th: 'ใคร', ph: 'khrai', tone: 'midden', nl: 'Wie' },
+          { id: 'w15_6', th: 'อะไร', ph: 'a-rai', tone: 'laag - midden', nl: 'Wat' },
+          { id: 'w15_7', th: 'ที่ไหน', ph: 'thie-nai', tone: 'dalend - stijgend', nl: 'Waar' },
+          { id: 'w15_8', th: 'เมื่อไหร่', ph: 'muea-rai', tone: 'dalend - laag', nl: 'Wanneer' },
+          { id: 'w15_9', th: 'ทำไม', ph: 'tham-mai', tone: 'midden - midden', nl: 'Waarom' }
+        ],
+        sentences: [
+          { id: 's15_1', th: 'นี่ อะไร {P}', ph: 'nie a-rai {p}', nl: 'Wat is dit?', tokens: ['นี่', 'อะไร', '{P}'], blankIdx: 1 },
+          { id: 's15_2', th: 'คุณ ไป ที่ไหน {P}', ph: 'khoen pai thie-nai {p}', nl: 'Waar ga je naartoe?', tokens: ['คุณ', 'ไป', 'ที่ไหน', '{P}'], blankIdx: 2 },
+          { id: 's15_3', th: 'ชา หรือ กาแฟ {P}', ph: 'tsjaa ruu kaa-fee {p}', nl: 'Thee of koffie?', tokens: ['ชา', 'หรือ', 'กาแฟ', '{P}'], blankIdx: 1 },
+          { id: 's15_4', th: 'อร่อย แต่ เผ็ด มาก', ph: 'a-roi tee phet maak', nl: 'Lekker, maar erg pittig', tokens: ['อร่อย', 'แต่', 'เผ็ด', 'มาก'], blankIdx: 1 },
+          { id: 's15_5', th: 'คุณ มา เมื่อไหร่ {P}', ph: 'khoen maa muea-rai {p}', nl: 'Wanneer ben je gekomen?', tokens: ['คุณ', 'มา', 'เมื่อไหร่', '{P}'], blankIdx: 2 }
+        ]
+      },
+      {
+        id: 16,
+        title: 'Tijdvormen in het Thais',
+        subtitle: 'Verleden, toekomst en nu-bezig uitdrukken met slechts 4 slimme woordjes',
+        icon: '⏳',
+        color: { bg: '#EC4899', dark: '#DB2777', light: '#FCE7F3', text: '#9D174D' },
+        tipTitle: 'De 4 magische tijdsmarkeerders',
+        tipContent: 'Onthoud deze 4 sleutelwoorden en je beheerst alle Thaise tijden:<br>• <b>จะ (dja)</b> vóór het werkwoord = toekomst ("zal/ga")<br>• <b>กำลัง (kam-lang)</b> vóór het werkwoord = nu bezig<br>• <b>แล้ว (leeuw)</b> achteraan = al gebeurd / voltooid<br>• <b>ยังไม่ (jang mai)</b> vóór het werkwoord = nog niet!',
+        words: [
+          { id: 'w16_1', th: 'แล้ว', ph: 'leeuw', tone: 'hoog', nl: 'Al / Voltooid (verleden)', note: 'Staat achteraan de zin' },
+          { id: 'w16_2', th: 'จะ', ph: 'dja', tone: 'laag', nl: 'Zullen / Gaan (toekomst)', note: 'Staat vóór het werkwoord' },
+          { id: 'w16_3', th: 'กำลัง', ph: 'kam-lang', tone: 'midden - midden', nl: 'Bezig zijn met', note: 'Staat vóór het werkwoord' },
+          { id: 'w16_4', th: 'ยังไม่', ph: 'jang mai', tone: 'midden - dalend', nl: 'Nog niet' },
+          { id: 'w16_5', th: 'เคย', ph: 'kheui', tone: 'midden', nl: 'Ooit (ervaring hebben)' },
+          { id: 'w16_6', th: 'เพิ่ง', ph: 'pheung', tone: 'dalend', nl: 'Net / Zojuist' },
+          { id: 'w16_7', th: 'เสร็จแล้ว', ph: 'set leeuw', tone: 'laag - hoog', nl: 'Klaar / Afgerond' },
+          { id: 'w16_8', th: 'กินแล้ว', ph: 'kin leeuw', tone: 'midden - hoog', nl: 'Heb al gegeten' }
+        ],
+        sentences: [
+          { id: 's16_1', th: '{I} กิน ข้าว แล้ว {P}', ph: '{i} kin khaau leeuw {p}', nl: 'Ik heb al gegeten', tokens: ['{I}', 'กิน', 'ข้าว', 'แล้ว', '{P}'], blankIdx: 3 },
+          { id: 's16_2', th: 'พรุ่งนี้ {I} จะ ไป ชายหาด', ph: 'phroeng-nie {i} dja pai tsjaai haat', nl: 'Morgen ga ik naar het strand', tokens: ['พรุ่งนี้', '{I}', 'จะ', 'ไป', 'ชายหาด'], blankIdx: 2 },
+          { id: 's16_3', th: '{I} กำลัง กิน ก๋วยเตี๋ยว', ph: '{i} kam-lang kin koeai-tiau', nl: 'Ik ben noedels aan het eten', tokens: ['{I}', 'กำลัง', 'กิน', 'ก๋วยเตี๋ยว'], blankIdx: 1 },
+          { id: 's16_4', th: '{I} ยังไม่ กิน ข้าว {P}', ph: '{i} jang mai kin khaau {p}', nl: 'Ik heb nog niet gegeten', tokens: ['{I}', 'ยังไม่', 'กิน', 'ข้าว', '{P}'], blankIdx: 1 },
+          { id: 's16_5', th: 'คุณ เคย ไป เกาะ ไหม', ph: 'khoen kheui pai ko mai', nl: 'Ben je ooit naar een eiland geweest?', tokens: ['คุณ', 'เคย', 'ไป', 'เกาะ', 'ไหม'], blankIdx: 1 }
+        ]
+      },
+      {
+        id: 17,
+        title: 'Telwoorden & Classifiers',
+        subtitle: 'Precies bestellen als een local: 1 bord, 2 flessen, 3 personen',
+        icon: '🍽️',
+        color: { bg: '#14B8A6', dark: '#0D9488', light: '#CCFBF1', text: '#115E59' },
+        tipTitle: 'Volgorde: Ding + Aantal + Classifier',
+        tipContent: 'In het Thais gebruik je bij het tellen een maatwoord (classifier) in de volgorde <b>Zelfstandig naamwoord + Getal + Classifier</b>. Bijvoorbeeld: <i>น้ำ สอง ขวด (nam song khoeat)</i> = water + 2 + fles. Weet je de classifier niet? Gebruik <b>อัน (an)</b> voor algemene voorwerpen!',
+        words: [
+          { id: 'w17_1', th: 'อัน', ph: 'an', tone: 'midden', nl: 'Stuk (algemeen voorwerp)' },
+          { id: 'w17_2', th: 'คน', ph: 'khon', tone: 'midden', nl: 'Persoon / Personen' },
+          { id: 'w17_3', th: 'ขวด', ph: 'khoeat', tone: 'laag', nl: 'Fles (classifier)' },
+          { id: 'w17_4', th: 'จาน', ph: 'djaan', tone: 'midden', nl: 'Bord (classifier)' },
+          { id: 'w17_5', th: 'แก้ว', ph: 'keeuw', tone: 'dalend', nl: 'Glas / Beker (classifier)' },
+          { id: 'w17_6', th: 'ชาม', ph: 'tsjaam', tone: 'midden', nl: 'Kom / Schaal (noedels)' },
+          { id: 'w17_7', th: 'ใบ', ph: 'bai', tone: 'midden', nl: 'Stuk (fruit / tassen / tickets)' },
+          { id: 'w17_8', th: 'ตัว', ph: 'toea', tone: 'midden', nl: 'Stuk (dieren / kleding)' }
+        ],
+        sentences: [
+          { id: 's17_1', th: 'ขอ เบียร์ สอง ขวด {P}', ph: 'khoo bia song khoeat {p}', nl: 'Mag ik twee flessen bier?', tokens: ['ขอ', 'เบียร์', 'สอง', 'ขวด', '{P}'], blankIdx: 3 },
+          { id: 's17_2', th: 'ขอ ข้าวผัด หนึ่ง จาน {P}', ph: 'khoo khaau phat neung djaan {p}', nl: 'Mag ik één bord gebakken rijst?', tokens: ['ขอ', 'ข้าวผัด', 'หนึ่ง', 'จาน', '{P}'], blankIdx: 3 },
+          { id: 's17_3', th: 'กาแฟ เย็น สอง แก้ว {P}', ph: 'kaa-fee jen song keeuw {p}', nl: 'Twee glazen ijskoffie alstublieft', tokens: ['กาแฟ', 'เย็น', 'สอง', 'แก้ว', '{P}'], blankIdx: 3 },
+          { id: 's17_4', th: 'มี สาม คน {P}', ph: 'mie saam khon {p}', nl: 'We zijn met drie personen', tokens: ['มี', 'สาม', 'คน', '{P}'], blankIdx: 2 },
+          { id: 's17_5', th: 'ขอ ก๋วยเตี๋ยว หนึ่ง ชาม', ph: 'khoo koeai-tiau neung tsjaam', nl: 'Mag ik één kom noedels?', tokens: ['ขอ', 'ก๋วยเตี๋ยว', 'หนึ่ง', 'ชาม'], blankIdx: 3 }
+        ]
+      },
+      {
+        id: 18,
+        title: 'Gevoelens, Meningen & Smalltalk',
+        subtitle: 'Vertellen wat je mooi, leuk of bijzonder vindt in Thailand',
+        icon: '💛',
+        color: { bg: '#F97316', dark: '#EA580C', light: '#FFEDD5', text: '#9A3412' },
+        tipTitle: 'Sanuk (สนุก) — Het hart van de Thaise cultuur',
+        tipContent: '<b>สนุก (sa-noek)</b> betekent "leuk / plezierig" en is een kernwaarde in Thailand: of het nu werk, eten of reizen is, er moet <i>sa-noek</i> in zitten! Met <b>ชอบ (tsjop)</b> vertel je wat je leuk/lekker vindt: <i>{i} tsjop mueang thai maak</i> (Ik hou erg van Thailand).',
+        words: [
+          { id: 'w18_1', th: 'ดีใจ', ph: 'die-djai', tone: 'midden - midden', nl: 'Blij / Verheugd' },
+          { id: 'w18_2', th: 'เหนื่อย', ph: 'nueai', tone: 'laag', nl: 'Moe' },
+          { id: 'w18_3', th: 'สวย', ph: 'soeaui', tone: 'stijgend', nl: 'Mooi' },
+          { id: 'w18_4', th: 'สนุก', ph: 'sa-noek', tone: 'laag - laag', nl: 'Leuk / Gezellig' },
+          { id: 'w18_5', th: 'ชอบ', ph: 'tsjop', tone: 'dalend', nl: 'Leuk vinden / Houden van' },
+          { id: 'w18_6', th: 'รัก', ph: 'rak', tone: 'hoog', nl: 'Liefhebben / Houden van' },
+          { id: 'w18_7', th: 'เงียบ', ph: 'ngiap', tone: 'dalend', nl: 'Rustig / Stil' },
+          { id: 'w18_8', th: 'หิว', ph: 'hieuw', tone: 'stijgend', nl: 'Hongerig' },
+          { id: 'w18_9', th: 'คิดว่า', ph: 'khit waa', tone: 'hoog - dalend', nl: 'Ik denk / Ik vind dat' }
+        ],
+        sentences: [
+          { id: 's18_1', th: '{I} ชอบ เมืองไทย มาก {P}', ph: '{i} tsjop mueang-thai maak {p}', nl: 'Ik hou erg van Thailand', tokens: ['{I}', 'ชอบ', 'เมืองไทย', 'มาก', '{P}'], blankIdx: 1 },
+          { id: 's18_2', th: 'ทะเล สวย มาก {P}', ph: 'tha-lee soeaui maak {p}', nl: 'De zee is heel mooi!', tokens: ['ทะเล', 'สวย', 'มาก', '{P}'], blankIdx: 1 },
+          { id: 's18_3', th: 'วันนี้ สนุก มาก {P}', ph: 'wan-nie sa-noek maak {p}', nl: 'Het was vandaag erg leuk', tokens: ['วันนี้', 'สนุก', 'มาก', '{P}'], blankIdx: 1 },
+          { id: 's18_4', th: 'ตอนนี้ {I} หิว ข้าว มาก', ph: 'ton-nie {i} hieuw khaau maak', nl: 'Ik heb nu heel erg honger', tokens: ['ตอนนี้', '{I}', 'หิว', 'ข้าว', 'มาก'], blankIdx: 2 },
+          { id: 's18_5', th: '{I} เหนื่อย แต่ ดีใจ', ph: '{i} nueai tee die-djai', nl: 'Ik ben moe maar blij', tokens: ['{I}', 'เหนื่อย', 'แต่', 'ดีใจ'], blankIdx: 1 }
+        ]
+      },
+      {
+        id: 19,
+        title: 'Thaise Cultuur & Etiquette',
+        subtitle: 'Respectvol tempels bezoeken, de Wai en culturele beleefdheid',
+        icon: '🛕',
+        color: { bg: '#A855F7', dark: '#9333EA', light: '#F3E8FF', text: '#6B21A8' },
+        tipTitle: 'Respect in tempels & de Wai',
+        tipContent: 'Bij een <b>วัด (wat — tempel)</b> of Thais huis doe je altijd je schoenen uit: <b>ถอดรองเท้า (thot rong-thau)</b>. Bedek schouders en knieën, en wijs nooit met je voeten naar een Boeddhabeeld. Een vriendelijke <b>ไหว้ (wai)</b> met handpalmen tegen elkaar wordt enorm gewaardeerd!',
+        words: [
+          { id: 'w19_1', th: 'วัด', ph: 'wat', tone: 'hoog', nl: 'Tempel' },
+          { id: 'w19_2', th: 'ไหว้', ph: 'wai', tone: 'dalend', nl: 'De Wai (groet met handen samen)' },
+          { id: 'w19_3', th: 'ถอดรองเท้า', ph: 'thot rong-thau', tone: 'laag - midden - hoog', nl: 'Schoenen uitdoen' },
+          { id: 'w19_4', th: 'สุภาพ', ph: 'soe-phaap', tone: 'laag - dalend', nl: 'Beleefd / Netjes' },
+          { id: 'w19_5', th: 'ยิ้ม', ph: 'jim', tone: 'hoog', nl: 'Glimlachen' },
+          { id: 'w19_6', th: 'ใจดี', ph: 'djai-die', tone: 'midden - midden', nl: 'Aardig / Goedhartig' },
+          { id: 'w19_7', th: 'รบกวนหน่อย{P}', ph: 'rop-koean noi {p}', tone: 'hoog - midden - laag', nl: 'Mag ik u even storen?' },
+          { id: 'w19_8', th: 'พระ', ph: 'phra', tone: 'hoog', nl: 'Monnik / Boeddha' },
+          { id: 'w19_9', th: 'โชคดี{P}', ph: 'tsjook-die {p}', tone: 'dalend - midden', nl: 'Veel geluk! / Goede reis!' }
+        ],
+        sentences: [
+          { id: 's19_1', th: 'คน ไทย ใจดี มาก {P}', ph: 'khon thai djai-die maak {p}', nl: 'Thaise mensen zijn heel aardig', tokens: ['คน', 'ไทย', 'ใจดี', 'มาก', '{P}'], blankIdx: 2 },
+          { id: 's19_2', th: 'กรุณา ถอดรองเท้า {P}', ph: 'ka-roe-naa thot rong-thau {p}', nl: 'Schoenen uitdoen alstublieft', tokens: ['กรุณา', 'ถอดรองเท้า', '{P}'], blankIdx: 1 },
+          { id: 's19_3', th: 'วัด นี้ สวย มาก {P}', ph: 'wat nie soeaui maak {p}', nl: 'Deze tempel is heel mooi', tokens: ['วัด', 'นี้', 'สวย', 'มาก', '{P}'], blankIdx: 0 },
+          { id: 's19_4', th: 'ขอ รบกวนหน่อย ได้ไหม {P}', ph: 'khoo rop-koean noi dai mai {p}', nl: 'Mag ik u even iets vragen?', tokens: ['ขอ', 'รบกวนหน่อย', 'ได้ไหม', '{P}'], blankIdx: 1 },
+          { id: 's19_5', th: 'ขอบคุณ มาก โชคดี {P}', ph: 'khop-khoen maak tsjook-die {p}', nl: 'Heel erg bedankt, veel geluk!', tokens: ['ขอบคุณ', 'มาก', 'โชคดี', '{P}'], blankIdx: 2 }
+        ]
+      },
+      {
+        id: 20,
+        title: 'Vloeiende Vakantie- & Basisdialogen',
+        subtitle: 'Alles samenbrengen: echte gesprekken op markt, restaurant en reis',
+        icon: '🏆',
+        color: { bg: '#EAB308', dark: '#CA8A04', light: '#FEF9C3', text: '#854D0E' },
+        tipTitle: 'Gefeliciteerd — Je spreekt basis-Thais!',
+        tipContent: 'In dit eindniveau combineer je alles uit niveau 1 t/m 19 tot complete, vloeiende zinnen! Probeer nu eens de <b>fonetiek uit te schakelen</b> bovenin om je leesvaardigheid en gehoor echt uit te dagen. <b>สู้ๆ (soe-soe)</b> — Zet \'m op!',
+        words: [
+          { id: 'w20_1', th: 'พูดช้าๆ หน่อย{P}', ph: 'phoet tsjaa-tsjaa noi {p}', tone: 'dalend - hoog - laag', nl: 'Kunt u wat langzamer praten?' },
+          { id: 'w20_2', th: 'ช่วยแนะนำหน่อย{P}', ph: 'tsjoeai ne-nam noi {p}', tone: 'dalend - hoog - midden - laag', nl: 'Kunt u iets aanbevelen?' },
+          { id: 'w20_3', th: 'จ่ายด้วยบัตรได้ไหม', ph: 'djaai doeai bat dai mai', tone: 'laag - dalend - laag - dalend - stijgend', nl: 'Kan ik met kaart betalen?' },
+          { id: 'w20_4', th: 'เงินสด', ph: 'ngeun sot', tone: 'midden - laag', nl: 'Contant geld' },
+          { id: 'w20_5', th: 'ไกลไหม{P}', ph: 'klai mai {p}', tone: 'midden - stijgend', nl: 'Is het ver?' },
+          { id: 'w20_6', th: 'ใกล้ๆ', ph: 'klai-klai', tone: 'dalend - dalend', nl: 'Dichtbij' },
+          { id: 'w20_7', th: 'พบกันใหม่{P}', ph: 'phop kan mai {p}', tone: 'hoog - midden - laag', nl: 'Tot de volgende keer!' },
+          { id: 'w20_8', th: 'สู้ๆ', ph: 'soe-soe', tone: 'dalend - dalend', nl: 'Zet \'m op! / Succes!' },
+          { id: 'w20_9', th: 'ยินดีต้อนรับ', ph: 'jin-die ton-rap', tone: 'midden - midden - dalend - hoog', nl: 'Welkom!' }
+        ],
+        sentences: [
+          { id: 's20_1', th: 'ขอโทษ {P} พูดช้าๆ หน่อย {P}', ph: 'khoo-thoot {p}, phoet tsjaa-tsjaa noi {p}', nl: 'Sorry, kunt u iets langzamer praten?', tokens: ['ขอโทษ', 'พูดช้าๆ หน่อย', '{P}'], blankIdx: 1 },
+          { id: 's20_2', th: 'ช่วยแนะนำหน่อย อาหาร อร่อย {P}', ph: 'tsjoeai ne-nam noi aa-haan a-roi {p}', nl: 'Kunt u lekker eten aanbevelen?', tokens: ['ช่วยแนะนำหน่อย', 'อาหาร', 'อร่อย', '{P}'], blankIdx: 0 },
+          { id: 's20_3', th: 'จ่ายด้วยบัตรได้ไหม หรือ เงินสด', ph: 'djaai doeai bat dai mai ruu ngeun sot', nl: 'Kan ik met kaart betalen of contant?', tokens: ['จ่ายด้วยบัตรได้ไหม', 'หรือ', 'เงินสด'], blankIdx: 2 },
+          { id: 's20_4', th: 'ไป ชายหาด ไกลไหม {P}', ph: 'pai tsjaai haat klai mai {p}', nl: 'Is het ver naar het strand?', tokens: ['ไป', 'ชายหาด', 'ไกลไหม', '{P}'], blankIdx: 2 },
+          { id: 's20_5', th: 'ขอบคุณ มาก พบกันใหม่ {P}', ph: 'khop-khoen maak phop kan mai {p}', nl: 'Heel erg bedankt, tot de volgende keer!', tokens: ['ขอบคุณ', 'มาก', 'พบกันใหม่', '{P}'], blankIdx: 2 }
+        ]
+      }
+    ];
+
+    // 10 vaste didactische opdrachttitels per niveau
+    const TASK_TITLES = [
+      { name: 'Kernwoorden A', desc: 'Maak kennis met de eerste woorden', icon: '🌱' },
+      { name: 'Kernwoorden B', desc: 'Breid je basiswoordenschat uit', icon: '🌿' },
+      { name: 'Luisteren & Uitspraak', desc: 'Train je gehoor en Thaise tonen', icon: '🎧' },
+      { name: 'Eerste Zinnen', desc: 'Zet woorden om in bruikbare zinnen', icon: '💬' },
+      { name: 'Snelkoppelen', desc: 'Koppel Thais en Nederlands vliegensvlug', icon: '🔗' },
+      { name: 'Woordenschat Verdiepen', desc: 'Actief ophalen van alle niveauwoorden', icon: '🧠' },
+      { name: 'Zinnen Bouwen', desc: 'Bouw zelf Thaise zinnen met blokken', icon: '🧱' },
+      { name: 'Actieve Herhaling (SRS)', desc: 'Slimme mix met eerdere leerstof', icon: '🔄' },
+      { name: 'Praktijksituatie', desc: 'Echte situaties voor op reis in Thailand', icon: '✈️' },
+      { name: 'Niveau-Mix', desc: 'Laatste voorbereiding op het examen!', icon: '🎯' }
+    ];
+
+    // Prestatie-badges voor gamification
+    const BADGES = [
+      { id: 'first_lesson', title: 'Eerste Stap', desc: 'Voltooi je allereerste opdracht', icon: '🌱', check: s => s.totalLessons >= 1 },
+      { id: 'perfect_round', title: 'Foutloos!', desc: 'Rond een opdracht af zonder fouten', icon: '✨', check: s => s.perfectLessons >= 1 },
+      { id: 'exam_1', title: 'Sawasdee Pro', desc: 'Haal het Niveau 1 Examen', icon: '🙏', check: s => s.passedExams.includes(1) },
+      { id: 'exam_5', title: 'Vakantie Klaar', desc: 'Haal het Niveau 5 Examen', icon: '🥥', check: s => s.passedExams.includes(5) },
+      { id: 'exam_10', title: 'Thailand Reiziger', desc: 'Haal het Niveau 10 Examen', icon: '🏝️', check: s => s.passedExams.includes(10) },
+      { id: 'exam_20', title: 'Thais Meester', desc: 'Haal alle 20 Niveau-Examens!', icon: '👑', check: s => s.passedExams.includes(20) },
+      { id: 'streak_3', title: 'Op Dreef', desc: 'Bereik een streak van 3 dagen', icon: '🔥', check: s => s.streak >= 3 },
+      { id: 'words_25', title: 'Woordverzamelaar', desc: 'Oefen 25 verschillende Thaise woorden', icon: '📚', check: s => Object.keys(s.srs).length >= 25 },
+      { id: 'words_100', title: 'Taalbouwer', desc: 'Oefen 100 verschillende Thaise woorden', icon: '🐘', check: s => Object.keys(s.srs).length >= 100 },
+      { id: 'xp_500', title: '500 XP Club', desc: 'Verzamel 500 XP in totaal', icon: '⚡', check: s => s.xp >= 500 }
+    ];
+
+    // Hulpindex van alle woorden en zinnen voor snelle lookup
+    const ALL_WORDS = [];
+    const WORD_MAP = {};
+    LEVELS.forEach(lvl => {
+      lvl.words.forEach(w => {
+        const entry = { ...w, levelId: lvl.id };
+        ALL_WORDS.push(entry);
+        WORD_MAP[w.id] = entry;
+      });
+    });
+
+    // Dynamische vervanging van beleefdheidsvorm (Man ครับ / Vrouw ค่ะ) en Ik (ผม / ฉัน)
+    function formatThai(str) {
+      if (!str) return '';
+      const isMale = AppState.settings.gender === 'male';
+      return str
+        .replace(/\{P\}/g, isMale ? 'ครับ' : 'ค่ะ')
+        .replace(/\{I\}/g, isMale ? 'ผม' : 'ฉัน')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    function formatPhonetic(str) {
+      if (!str) return '';
+      const isMale = AppState.settings.gender === 'male';
+      return str
+        .replace(/\{p\}/g, isMale ? 'khrap' : 'kha')
+        .replace(/\{i\}/g, isMale ? 'phom' : 'tsjan')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    // -------------------------
+    // 3. STATE MANAGEMENT & LOCALSTORAGE (GEEN ACCOUNT NODIG)
+    // -------------------------
+    const STORAGE_KEY = 'sawasdeelingo_v1';
+
+    function getTodayStr() {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+
+    function createDefaultState() {
+      return {
+        unlockedLevel: 1,
+        completedTasks: {}, // { "1": [0, 1, ...], ... }
+        passedExams: [],    // [1, 2, ...]
+        xp: 0,
+        dailyXp: 0,
+        dailyGoal: 50,
+        streak: 0,
+        lastActiveDate: null,
+        hearts: 5,
+        lastHeartRegen: Date.now(),
+        gems: 50,
+        totalLessons: 0,
+        perfectLessons: 0,
+        srs: {},            // { wordId: { box: 0..5, correct: 0, wrong: 0, nextReview: ms } }
+        badges: [],
+        seenWelcomeTour: false,
+        settings: {
+          gender: 'male',        // 'male' (ครับ/ผม) | 'female' (ค่ะ/ฉัน)
+          showPhonetics: true,
+          soundOn: true,
+          unlockAllPreview: false
+        }
+      };
+    }
+
+    let AppState = loadState();
+
+    function loadState() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return createDefaultState();
+        const parsed = JSON.parse(raw);
+        const def = createDefaultState();
+        const merged = {
+          ...def,
+          ...parsed,
+          settings: { ...def.settings, ...(parsed.settings || {}) }
+        };
+        return merged;
+      } catch (e) {
+        return createDefaultState();
+      }
+    }
+
+    function saveState() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(AppState));
+      } catch (e) {}
+    }
+
+    // Automatisch hartjes aanvullen (1 hartje per 15 minuten) & dagelijkse XP resetten op nieuwe dag
+    function syncDailyAndHearts() {
+      const today = getTodayStr();
+      if (AppState.lastActiveDate && AppState.lastActiveDate !== today) {
+        const last = new Date(AppState.lastActiveDate);
+        const now = new Date(today);
+        const diffDays = Math.round((now - last) / (1000 * 60 * 60 * 24));
+        if (diffDays > 1) {
+          AppState.streak = 0; // Streak verlopen na >1 dag gemist
+        }
+        AppState.dailyXp = 0;
+      }
+      // Hartjes regeneratie
+      if (AppState.hearts < 5) {
+        const elapsedMin = Math.floor((Date.now() - (AppState.lastHeartRegen || Date.now())) / 60000);
+        const regen = Math.floor(elapsedMin / 15);
+        if (regen > 0) {
+          AppState.hearts = Math.min(5, AppState.hearts + regen);
+          AppState.lastHeartRegen = Date.now();
+        }
+      }
+      saveState();
+    }
+
+    function recordActivityXp(amount) {
+      const today = getTodayStr();
+      if (AppState.lastActiveDate !== today) {
+        const prev = AppState.lastActiveDate ? new Date(AppState.lastActiveDate) : null;
+        const curr = new Date(today);
+        const diff = prev ? Math.round((curr - prev) / (1000 * 60 * 60 * 24)) : 99;
+        AppState.streak = diff === 1 ? AppState.streak + 1 : 1;
+        AppState.lastActiveDate = today;
+        AppState.dailyXp = 0;
+      }
+      AppState.xp += amount;
+      AppState.dailyXp += amount;
+      checkNewBadges();
+      saveState();
+    }
+
+    function checkNewBadges() {
+      BADGES.forEach(b => {
+        if (!AppState.badges.includes(b.id) && b.check(AppState)) {
+          AppState.badges.push(b.id);
+          showToast(`🏆 Nieuwe badge ontgrendeld: ${b.title}!`, 'success');
+        }
+      });
+    }
+
+    // -------------------------
+    // 4. SPACED REPETITION SYSTEM (LEITNER BOX 0-5)
+    // -------------------------
+    const SRS_INTERVALS_MS = [
+      0,
+      10 * 60 * 1000,           // Box 1: 10 minuten
+      24 * 60 * 60 * 1000,      // Box 2: 1 dag
+      3 * 24 * 60 * 60 * 1000,  // Box 3: 3 dagen
+      7 * 24 * 60 * 60 * 1000,  // Box 4: 7 dagen
+      21 * 24 * 60 * 60 * 1000  // Box 5: 21 dagen
+    ];
+
+    function updateSRS(wordId, isCorrect) {
+      if (!wordId || !WORD_MAP[wordId]) return;
+      const now = Date.now();
+      const cur = AppState.srs[wordId] || { box: 0, correct: 0, wrong: 0, nextReview: 0 };
+      if (isCorrect) {
+        cur.box = Math.min(5, cur.box + 1);
+        cur.correct += 1;
+        cur.nextReview = now + SRS_INTERVALS_MS[cur.box];
+      } else {
+        cur.box = Math.max(1, cur.box - 2);
+        cur.wrong += 1;
+        cur.nextReview = now; // Direct weer klaar voor herhaling!
+      }
+      AppState.srs[wordId] = cur;
+      saveState();
+    }
+
+    function getDueWords() {
+      const now = Date.now();
+      return Object.entries(AppState.srs)
+        .filter(([id, data]) => WORD_MAP[id] && (data.nextReview <= now || data.box <= 1))
+        .sort((a, b) => a[1].box - b[1].box || a[1].nextReview - b[1].nextReview)
+        .map(([id]) => WORD_MAP[id]);
+    }
+
+    function getWeakWords(maxLevelId = 20) {
+      return Object.entries(AppState.srs)
+        .filter(([id, data]) => WORD_MAP[id] && WORD_MAP[id].levelId <= maxLevelId && (data.wrong > 0 || data.box <= 2))
+        .sort((a, b) => (b[1].wrong - a[1].wrong) || (a[1].box - b[1].box))
+        .map(([id]) => WORD_MAP[id]);
+    }
+
+    // -------------------------
+    // 5. HULPFUNCTIES & OEFENING-GENERATOR
+    // -------------------------
+    function shuffle(arr) {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+
+    function pickDistractors(targetWord, pool, count = 3) {
+      const candidates = shuffle(pool.filter(w => w.id !== targetWord.id && w.nl !== targetWord.nl));
+      const picked = candidates.slice(0, count);
+      if (picked.length < count) {
+        const extra = shuffle(ALL_WORDS.filter(w => w.id !== targetWord.id && !picked.some(p => p.id === w.id)));
+        picked.push(...extra.slice(0, count - picked.length));
+      }
+      return picked;
+    }
+
+    // Maak individuele oefening objecten (6 verschillende wetenschappelijk onderbouwde werkvormen)
+    function makeMcThNl(word, pool) {
+      const dist = pickDistractors(word, pool, 3);
+      const options = shuffle([word, ...dist]).map(w => ({
+        id: w.id,
+        label: w.nl,
+        isCorrect: w.id === word.id
+      }));
+      return {
+        type: 'mc_th_nl',
+        wordId: word.id,
+        promptLabel: 'Wat betekent dit in het Nederlands?',
+        thai: word.th,
+        phonetic: word.ph,
+        tone: word.tone,
+        note: word.note || '',
+        options,
+        answerText: word.nl
+      };
+    }
+
+    function makeMcNlTh(word, pool) {
+      const dist = pickDistractors(word, pool, 3);
+      const options = shuffle([word, ...dist]).map(w => ({
+        id: w.id,
+        thai: w.th,
+        phonetic: w.ph,
+        isCorrect: w.id === word.id
+      }));
+      return {
+        type: 'mc_nl_th',
+        wordId: word.id,
+        promptLabel: 'Kies de juiste Thaise vertaling',
+        nlPrompt: word.nl,
+        note: word.note || '',
+        options,
+        answerText: `${formatThai(word.th)} (${formatPhonetic(word.ph)})`
+      };
+    }
+
+    function makeListenEx(word, pool) {
+      const dist = pickDistractors(word, pool, 3);
+      const options = shuffle([word, ...dist]).map(w => ({
+        id: w.id,
+        label: w.nl,
+        thai: w.th,
+        phonetic: w.ph,
+        isCorrect: w.id === word.id
+      }));
+      return {
+        type: 'listen',
+        wordId: word.id,
+        promptLabel: 'Luister goed: wat hoor je?',
+        thai: word.th,
+        phonetic: word.ph,
+        tone: word.tone,
+        options,
+        answerText: `${formatThai(word.th)} — ${word.nl}`
+      };
+    }
+
+    function makeBuildSentenceEx(sentence, wordPool) {
+      const correctTokens = sentence.tokens.map(t => formatThai(t));
+      // Voeg 2-3 afleiders toe uit de niveau-woordenschat
+      const distractors = shuffle(wordPool)
+        .map(w => formatThai(w.th).split(' ')[0])
+        .filter(t => t && !correctTokens.includes(t))
+        .slice(0, Math.min(3, Math.max(2, 6 - correctTokens.length)));
+
+      const bank = shuffle([...correctTokens, ...distractors]).map((text, idx) => ({
+        uid: `tok_${idx}_${Math.random().toString(36).slice(2, 6)}`,
+        text
+      }));
+
+      return {
+        type: 'build_sentence',
+        promptLabel: 'Bouw deze zin in het Thais',
+        nlPrompt: sentence.nl,
+        fullThai: sentence.th,
+        fullPhonetic: sentence.ph,
+        correctTokens,
+        bank,
+        answerText: `${formatThai(sentence.th)} (${formatPhonetic(sentence.ph)})`
+      };
+    }
+
+    function makeClozeEx(sentence, wordPool) {
+      const idx = Math.min(sentence.blankIdx || 0, sentence.tokens.length - 1);
+      const missingRaw = sentence.tokens[idx];
+      const missingFormatted = formatThai(missingRaw);
+
+      // Zoek eventuele fonetische hulp voor opties
+      const distCandidates = shuffle(wordPool)
+        .filter(w => formatThai(w.th) !== missingFormatted && formatThai(w.th).split(' ')[0] !== missingFormatted)
+        .slice(0, 3)
+        .map(w => ({ text: formatThai(w.th), ph: formatPhonetic(w.ph), isCorrect: false }));
+
+      // Vind fonetiek voor correct woord indien bekend
+      const matchedWord = ALL_WORDS.find(w => formatThai(w.th) === missingFormatted || formatThai(w.th).startsWith(missingFormatted));
+      const correctOpt = {
+        text: missingFormatted,
+        ph: matchedWord ? formatPhonetic(matchedWord.ph) : '',
+        isCorrect: true
+      };
+
+      return {
+        type: 'cloze',
+        promptLabel: 'Vul het ontbrekende Thaise woord in',
+        nlPrompt: sentence.nl,
+        tokens: sentence.tokens.map(t => formatThai(t)),
+        blankIdx: idx,
+        fullThai: sentence.th,
+        fullPhonetic: sentence.ph,
+        options: shuffle([correctOpt, ...distCandidates]),
+        answerText: `${formatThai(sentence.th)} (${formatPhonetic(sentence.ph)})`
+      };
+    }
+
+    function makeMatchPairsEx(wordsSubset) {
+      const chosen = shuffle(wordsSubset).slice(0, 4);
+      return {
+        type: 'match_pairs',
+        promptLabel: 'Koppel de juiste paren aan elkaar',
+        wordIds: chosen.map(w => w.id),
+        leftItems: shuffle(chosen.map(w => ({ id: w.id, thai: w.th, phonetic: w.ph }))),
+        rightItems: shuffle(chosen.map(w => ({ id: w.id, nl: w.nl }))),
+        answerText: 'Alle 4 paren gekoppeld!'
+      };
+    }
+
+    // Genereer minimaal 8 oefeningen voor een specifieke Opdracht (0..9) in een Niveau (1..20)
+    function generateTaskExercises(levelId, taskIdx) {
+      const level = LEVELS.find(l => l.id === levelId);
+      const words = level.words;
+      const sentences = level.sentences;
+      const priorWords = ALL_WORDS.filter(w => w.levelId < levelId);
+      const priorSentences = LEVELS.filter(l => l.id < levelId).flatMap(l => l.sentences);
+      const pool = [...words, ...priorWords];
+
+      const half = Math.ceil(words.length / 2);
+      const groupA = words.slice(0, half);
+      const groupB = words.slice(half);
+      const exercises = [];
+
+      switch (taskIdx) {
+        case 0: // Kernwoorden A (8 oefeningen)
+          groupA.forEach(w => exercises.push(makeMcThNl(w, words)));
+          groupA.slice(0, 2).forEach(w => exercises.push(makeListenEx(w, words)));
+          exercises.push(makeMatchPairsEx(groupA.length >= 4 ? groupA : words));
+          exercises.push(makeMcNlTh(groupA[0], words));
+          if (exercises.length < 8) exercises.push(makeMcNlTh(groupA[groupA.length - 1], words));
+          break;
+
+        case 1: // Kernwoorden B (8 oefeningen)
+          groupB.forEach(w => exercises.push(makeMcThNl(w, words)));
+          groupB.slice(0, 2).forEach(w => exercises.push(makeMcNlTh(w, words)));
+          exercises.push(makeListenEx(groupB[0] || words[0], words));
+          exercises.push(makeMatchPairsEx(groupB.length >= 4 ? groupB : words));
+          if (exercises.length < 8) exercises.push(makeListenEx(groupB[groupB.length - 1] || words[1], words));
+          break;
+
+        case 2: // Luisteren & Uitspraak (8 oefeningen)
+          shuffle(words).slice(0, 5).forEach(w => exercises.push(makeListenEx(w, words)));
+          shuffle(words).slice(0, 2).forEach(w => exercises.push(makeMcThNl(w, words)));
+          exercises.push(makeMatchPairsEx(words));
+          break;
+
+        case 3: // Eerste Zinnen (8 oefeningen)
+          sentences.slice(0, 3).forEach(s => exercises.push(makeBuildSentenceEx(s, words)));
+          sentences.slice(0, 2).forEach(s => exercises.push(makeClozeEx(s, words)));
+          shuffle(words).slice(0, 2).forEach(w => exercises.push(makeMcNlTh(w, words)));
+          exercises.push(makeListenEx(words[0], words));
+          break;
+
+        case 4: // Snelkoppelen (8 oefeningen)
+          exercises.push(makeMatchPairsEx(words.slice(0, 4)));
+          exercises.push(makeMatchPairsEx(words.slice(-4)));
+          shuffle(words).slice(0, 3).forEach(w => exercises.push(makeMcNlTh(w, words)));
+          shuffle(words).slice(0, 3).forEach(w => exercises.push(makeMcThNl(w, words)));
+          break;
+
+        case 5: // Woordenschat Verdiepen (8 oefeningen)
+          shuffle(words).slice(0, 3).forEach(w => exercises.push(makeMcNlTh(w, pool)));
+          shuffle(sentences).slice(0, 3).forEach(s => exercises.push(makeClozeEx(s, words)));
+          shuffle(words).slice(0, 2).forEach(w => exercises.push(makeListenEx(w, pool)));
+          break;
+
+        case 6: // Zinnen Bouwen (8 oefeningen)
+          sentences.forEach(s => exercises.push(makeBuildSentenceEx(s, words)));
+          sentences.slice(0, 2).forEach(s => exercises.push(makeClozeEx(s, words)));
+          exercises.push(makeMatchPairsEx(words));
+          break;
+
+        case 7: { // Actieve Herhaling (SRS + Interleaving met eerdere niveaus, 8-9 oefeningen)
+          const weak = getWeakWords(levelId);
+          const reviewPool = weak.length > 0 ? weak : (priorWords.length > 0 ? shuffle(priorWords) : shuffle(words));
+          reviewPool.slice(0, 3).forEach((w, i) => {
+            exercises.push(i % 2 === 0 ? makeMcNlTh(w, pool) : makeListenEx(w, pool));
+          });
+          shuffle(words).slice(0, 2).forEach(w => exercises.push(makeMcThNl(w, pool)));
+          exercises.push(makeBuildSentenceEx(sentences[0], words));
+          exercises.push(makeClozeEx(sentences[sentences.length - 1], words));
+          exercises.push(makeMatchPairsEx([...words.slice(0, 2), ...(priorWords.length >= 2 ? shuffle(priorWords).slice(0, 2) : words.slice(2, 4))]));
+          break;
+        }
+
+        case 8: // Praktijksituatie (8 oefeningen)
+          shuffle(sentences).slice(0, 3).forEach(s => exercises.push(makeBuildSentenceEx(s, pool)));
+          shuffle(sentences).slice(0, 2).forEach(s => exercises.push(makeClozeEx(s, pool)));
+          shuffle(words).slice(0, 3).forEach(w => exercises.push(makeListenEx(w, pool)));
+          break;
+
+        case 9: // Niveau-Mix (9 oefeningen als generale repetitie voor examen)
+        default:
+          shuffle(words).slice(0, 2).forEach(w => exercises.push(makeMcThNl(w, pool)));
+          shuffle(words).slice(0, 2).forEach(w => exercises.push(makeMcNlTh(w, pool)));
+          exercises.push(makeListenEx(shuffle(words)[0], pool));
+          exercises.push(makeBuildSentenceEx(shuffle(sentences)[0], words));
+          exercises.push(makeClozeEx(shuffle(sentences)[1] || sentences[0], words));
+          exercises.push(makeMatchPairsEx(words));
+          if (priorSentences.length > 0) {
+            exercises.push(makeBuildSentenceEx(shuffle(priorSentences)[0], pool));
+          } else {
+            exercises.push(makeListenEx(shuffle(words)[1] || words[0], pool));
+          }
+          break;
+      }
+
+      // Garandeer altijd minimaal 8 oefeningen
+      let safety = 0;
+      while (exercises.length < 8 && safety < 10) {
+        const w = words[safety % words.length];
+        exercises.push(safety % 2 === 0 ? makeMcNlTh(w, pool) : makeListenEx(w, pool));
+        safety++;
+      }
+
+      return exercises.slice(0, 9);
+    }
+
+    // Genereer Niveau-Examen (10 vragen: ~65% huidig niveau + ~35% cumulatieve eerdere niveaus, slagingsgrens 80%)
+    function generateExamExercises(levelId) {
+      const level = LEVELS.find(l => l.id === levelId);
+      const priorWords = ALL_WORDS.filter(w => w.levelId < levelId);
+      const priorSentences = LEVELS.filter(l => l.id < levelId).flatMap(l => l.sentences);
+      const allPool = [...level.words, ...priorWords];
+      const exercises = [];
+
+      const curWords = shuffle(level.words);
+      const curSents = shuffle(level.sentences);
+
+      // 6-7 vragen uit huidig niveau (~65%)
+      exercises.push(makeMcThNl(curWords[0], allPool));
+      exercises.push(makeMcNlTh(curWords[1 % curWords.length], allPool));
+      exercises.push(makeListenEx(curWords[2 % curWords.length], allPool));
+      exercises.push(makeBuildSentenceEx(curSents[0], level.words));
+      exercises.push(makeClozeEx(curSents[1 % curSents.length], level.words));
+      exercises.push(makeMatchPairsEx(level.words));
+
+      if (levelId === 1 || priorWords.length < 3) {
+        // Niveau 1 heeft geen voorgaande niveaus: 4 extra vragen uit Niveau 1
+        exercises.push(makeMcNlTh(curWords[3 % curWords.length], level.words));
+        exercises.push(makeListenEx(curWords[4 % curWords.length], level.words));
+        exercises.push(makeBuildSentenceEx(curSents[2 % curSents.length], level.words));
+        exercises.push(makeClozeEx(curSents[3 % curSents.length], level.words));
+      } else {
+        // Cumulatieve herhaling uit eerdere niveaus (~35-40% = 4 vragen, met prioriteit voor zwakkere SRS woorden)
+        const weakPrior = getWeakWords(levelId - 1);
+        const pickedPrior = shuffle([...weakPrior, ...shuffle(priorWords)]).filter((v, i, a) => a.findIndex(x => x.id === v.id) === i);
+        exercises.push(makeMcThNl(pickedPrior[0], allPool));
+        exercises.push(makeMcNlTh(pickedPrior[1 % pickedPrior.length], allPool));
+        exercises.push(makeListenEx(pickedPrior[2 % pickedPrior.length], allPool));
+        if (priorSentences.length > 0) {
+          exercises.push(makeBuildSentenceEx(shuffle(priorSentences)[0], allPool));
+        } else {
+          exercises.push(makeMcNlTh(curWords[3 % curWords.length], allPool));
+        }
+      }
+
+      return shuffle(exercises).slice(0, 10);
+    }
+
+    // Genereer SRS Herhaalsessie of Hartjes-Terugverdien-Sessie
+    function generateReviewExercises(mode = 'srs') {
+      const unlockedPool = ALL_WORDS.filter(w => w.levelId <= (AppState.settings.unlockAllPreview ? 20 : AppState.unlockedLevel));
+      const due = getDueWords();
+      const learned = Object.keys(AppState.srs).map(id => WORD_MAP[id]).filter(Boolean);
+      let source = due.length >= 4 ? due : (learned.length >= 4 ? shuffle(learned) : shuffle(unlockedPool));
+      if (source.length < 4) source = shuffle(unlockedPool);
+
+      const count = mode === 'hearts' ? 5 : 8;
+      const exercises = [];
+
+      for (let i = 0; i < count; i++) {
+        const w = source[i % source.length];
+        if (mode === 'listen') {
+          exercises.push(makeListenEx(w, unlockedPool));
+        } else if (i === 3 && source.length >= 4) {
+          exercises.push(makeMatchPairsEx(source.slice(0, 4)));
+        } else if (i % 3 === 0) {
+          exercises.push(makeMcThNl(w, unlockedPool));
+        } else if (i % 3 === 1) {
+          exercises.push(makeMcNlTh(w, unlockedPool));
+        } else {
+          exercises.push(makeListenEx(w, unlockedPool));
+        }
+      }
+      return exercises;
+    }
+
+    // -------------------------
+    // 6. MASCOTTE SVG ("CHANG" DE VROLIJKE THAISE OLIFANT)
+    // -------------------------
+    function renderElephantSVG(mood = 'happy', size = 64) {
+      const mouth = mood === 'sad'
+        ? '<path d="M44 58 Q50 53 56 58" stroke="#1E293B" stroke-width="2.5" fill="none" stroke-linecap="round"/>'
+        : mood === 'wow'
+          ? '<circle cx="50" cy="57" r="3.5" fill="#1E293B"/>'
+          : '<path d="M43 55 Q50 62 57 55" stroke="#1E293B" stroke-width="2.5" fill="none" stroke-linecap="round"/>';
+
+      const blush = mood === 'sad' ? '#94A3B8' : '#FF8A8A';
+
+      return `
+        <svg width="${size}" height="${size}" viewBox="0 0 100 100" class="inline-block shrink-0" aria-label="SawasdeeLingo Mascotte Chang">
+          <!-- Oren -->
+          <ellipse cx="20" cy="50" rx="16" ry="22" fill="#46A302"/>
+          <ellipse cx="22" cy="51" rx="10" ry="15" fill="#A5E86A"/>
+          <ellipse cx="80" cy="50" rx="16" ry="22" fill="#46A302"/>
+          <ellipse cx="78" cy="51" rx="10" ry="15" fill="#A5E86A"/>
+          <!-- Hoofd -->
+          <circle cx="50" cy="52" r="30" fill="#58CC02"/>
+          <!-- Gouden Thaise kroon / lotus -->
+          <path d="M38 24 L43 13 L50 20 L57 13 L62 24 Z" fill="#FFC800" stroke="#D9A600" stroke-width="2" stroke-linejoin="round"/>
+          <!-- Ogen -->
+          <circle cx="38" cy="46" r="4.5" fill="#1E293B"/>
+          <circle cx="36.5" cy="44.5" r="1.5" fill="#FFFFFF"/>
+          <circle cx="62" cy="46" r="4.5" fill="#1E293B"/>
+          <circle cx="60.5" cy="44.5" r="1.5" fill="#FFFFFF"/>
+          <!-- Wangetjes -->
+          <ellipse cx="30" cy="54" rx="4.5" ry="2.8" fill="${blush}" opacity="0.65"/>
+          <ellipse cx="70" cy="54" rx="4.5" ry="2.8" fill="${blush}" opacity="0.65"/>
+          <!-- Slurf -->
+          <path d="M46 58 Q46 76 58 76 Q64 76 64 70" stroke="#46A302" stroke-width="10" fill="none" stroke-linecap="round"/>
+          <path d="M46 58 Q46 74 58 74 Q62 74 62 70" stroke="#58CC02" stroke-width="6" fill="none" stroke-linecap="round"/>
+          <!-- Mond / expressie -->
+          ${mouth}
+        </svg>
+      `;
+    }
+
+    // -------------------------
+    // 7. UI NAVIGATIE & SESSIE STATE
+    // -------------------------
+    const UI = {
+      tab: 'learn',       // 'learn' | 'review' | 'words' | 'profile'
+      expandedLevel: null,
+      wordFilterLevel: 'all',
+      wordSearch: '',
+      session: null       // Actieve les/examen/herhaalsessie
+    };
+
+    // Toast melding
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toast-container');
+      const el = document.createElement('div');
+      const colors = {
+        success: 'bg-[#58CC02] text-white border-[#46A302]',
+        error: 'bg-[#FF4B4B] text-white border-[#D63030]',
+        info: 'bg-slate-800 text-white border-slate-900'
+      };
+      el.className = `pointer-events-auto px-4 py-3 rounded-2xl border-b-4 shadow-lg text-sm font-bold text-center animate-bounce-in ${colors[type] || colors.info}`;
+      el.textContent = message;
+      container.appendChild(el);
+      setTimeout(() => {
+        el.style.opacity = '0';
+        el.style.transition = 'opacity 0.25s ease';
+        setTimeout(() => el.remove(), 260);
+      }, 2800);
+    }
+
+    // Modaal dialoog (vervangt alert/confirm)
+    function openModal(htmlContent) {
+      const root = document.getElementById('modal-root');
+      root.innerHTML = `
+        <div class="w-full max-w-sm bg-white rounded-3xl shadow-2xl border-2 border-slate-200 overflow-hidden animate-bounce-in max-h-[88vh] flex flex-col">
+          ${htmlContent}
+        </div>
+      `;
+      root.classList.remove('hidden');
+      root.classList.add('flex');
+      root.onclick = (e) => {
+        if (e.target === root) closeModal();
+      };
+    }
+
+    function closeModal() {
+      const root = document.getElementById('modal-root');
+      root.classList.add('hidden');
+      root.classList.remove('flex');
+      root.innerHTML = '';
+    }
+
+    // Taaltip modaal voor een specifiek niveau
+    function showLevelTip(levelId) {
+      const lvl = LEVELS.find(l => l.id === levelId);
+      if (!lvl) return;
+      SoundFX.pop();
+      openModal(`
+        <div class="p-5 text-white flex items-center justify-between" style="background:${lvl.color.bg}">
+          <div>
+            <div class="text-xs uppercase tracking-wider font-extrabold opacity-90">Niveau ${lvl.id} • Taaltip</div>
+            <h3 class="text-lg font-black leading-tight mt-0.5">${lvl.tipTitle}</h3>
+          </div>
+          <span class="text-3xl">${lvl.icon}</span>
+        </div>
+        <div class="p-5 overflow-y-auto space-y-4">
+          <div class="flex items-start gap-3 bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
+            ${renderElephantSVG('happy', 52)}
+            <p class="text-sm text-slate-700 leading-relaxed">${lvl.tipContent}</p>
+          </div>
+          <div>
+            <div class="text-xs font-extrabold uppercase tracking-wider text-slate-400 mb-2">Kernwoorden in dit niveau</div>
+            <div class="space-y-1.5">
+              ${lvl.words.map(w => `
+                <button onclick="SpeechEngine.speak('${formatThai(w.th).replace(/'/g, "\\'")}')" class="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-left">
+                  <div>
+                    <div class="thai-text font-bold text-slate-900 text-base">${formatThai(w.th)}</div>
+                    <div class="text-xs text-sky-600 font-bold">${formatPhonetic(w.ph)}</div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs font-bold text-slate-600 text-right">${w.nl}</span>
+                    <span class="text-base">🔊</span>
+                  </div>
+                </button>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+        <div class="p-4 border-t border-slate-100 bg-slate-50">
+          <button onclick="closeModal()" class="duo-btn w-full py-3 rounded-2xl bg-[#58CC02] border-b-4 border-[#46A302] text-white font-extrabold text-sm uppercase tracking-wide">Begrepen!</button>
+        </div>
+      `);
+    }
+
+    // Interactieve Stap-voor-Stap Handleiding (voor nieuwe gebruikers én handig voor video-opname)
+    function showTourModal(step = 0) {
+      const steps = [
+        {
+          title: 'Welkom bij SawasdeeLingo! 🐘',
+          badge: 'Stap 1 van 5',
+          body: 'Leer op een speelse, wetenschappelijk onderbouwde manier Thais — van je allereerste <b>สวัสดี (sa-wat-die)</b> tot vloeiende vakantiegesprekken over <b>20 complete niveaus</b>.',
+          highlight: 'Geen account nodig: al je voortgang wordt direct veilig op je eigen telefoon bewaard!'
+        },
+        {
+          title: 'Man (ครับ) of Vrouw (ค่ะ) & Fonetiek',
+          badge: 'Stap 2 van 5',
+          body: 'Gebruik de knoppen in de bovenbalk om direct te schakelen tussen <b>Man (ครับ - khrap)</b> en <b>Vrouw (ค่ะ - kha)</b>. Alle Thaise zinnen passen zich automatisch aan!',
+          highlight: 'Tip: Zet "ABC" (fonetiek) aan als beginner en schakel het later uit om echt Thais schrift te oefenen.'
+        },
+        {
+          title: '20 Niveaus × 10 Opdrachten + Examen',
+          badge: 'Stap 3 van 5',
+          body: 'Volg het kronkelende leerpad! Elk niveau heeft <b>10 gevarieerde opdrachten</b> (elk 8+ oefeningen: meerkeuze, luisteren op normale & trage schildpad-snelheid, zinnen bouwen, paren matchen en invuloefeningen).',
+          highlight: 'Sluit elk niveau af met de Gouden Trofee: het Niveau-Examen (min. 80% scoren om het volgende niveau vrij te spelen).'
+        },
+        {
+          title: 'Wetenschappelijke Herhaling (SRS)',
+          badge: 'Stap 4 van 5',
+          body: 'Fouten tijdens een les komen aan het einde van dezelfde opdracht direct terug. Via het tabblad <b>Herhalen</b> oefen je vervallen of moeilijke woorden op het ideale geheugenmoment (Leitner-systeem).',
+          highlight: 'Hartjes op? Verdien gratis hartjes terug via een korte herhaalronde!'
+        },
+        {
+          title: 'Klaar om te starten! 🚀',
+          badge: 'Stap 5 van 5',
+          body: 'Tik op de groene pulserende knop van <b>Niveau 1 • Opdracht 1</b> op het leerpad om je eerste Thaise woorden te leren. Veel plezier en <b>สู้ๆ (soe-soe)</b>!',
+          highlight: 'Je kunt deze rondleiding altijd opnieuw openen via het tabblad Profiel.'
+        }
+      ];
+
+      const s = steps[step];
+      AppState.seenWelcomeTour = true;
+      saveState();
+
+      openModal(`
+        <div class="p-5 bg-[#58CC02] text-white text-center relative">
+          <div class="inline-block px-3 py-1 rounded-full bg-white/20 text-xs font-extrabold uppercase tracking-wider mb-2">${s.badge}</div>
+          <div class="my-1">${renderElephantSVG('happy', 76)}</div>
+          <h3 class="text-xl font-black mt-1">${s.title}</h3>
+        </div>
+        <div class="p-5 space-y-4">
+          <p class="text-sm text-slate-700 leading-relaxed">${s.body}</p>
+          <div class="p-3.5 rounded-2xl bg-sky-50 border border-sky-200 text-xs font-bold text-sky-900 leading-relaxed">
+            💡 ${s.highlight}
+          </div>
+          <!-- Voortgangspuntjes -->
+          <div class="flex justify-center gap-1.5 pt-1">
+            ${steps.map((_, idx) => `<span class="h-2 rounded-full transition-all ${idx === step ? 'w-6 bg-[#58CC02]' : 'w-2 bg-slate-200'}"></span>`).join('')}
+          </div>
+        </div>
+        <div class="p-4 border-t border-slate-100 flex gap-2">
+          ${step > 0
+            ? `<button onclick="showTourModal(${step - 1})" class="duo-btn flex-1 py-3 rounded-2xl bg-slate-100 border-b-4 border-slate-300 text-slate-700 font-extrabold text-sm">Vorige</button>`
+            : `<button onclick="closeModal()" class="duo-btn flex-1 py-3 rounded-2xl bg-slate-100 border-b-4 border-slate-300 text-slate-600 font-extrabold text-sm">Overslaan</button>`
+          }
+          ${step < steps.length - 1
+            ? `<button onclick="showTourModal(${step + 1})" class="duo-btn flex-1 py-3 rounded-2xl bg-[#58CC02] border-b-4 border-[#46A302] text-white font-extrabold text-sm">Volgende</button>`
+            : `<button onclick="closeModal()" class="duo-btn flex-1 py-3 rounded-2xl bg-[#58CC02] border-b-4 border-[#46A302] text-white font-extrabold text-sm">Start met Leren!</button>`
+          }
+        </div>
+      `);
+    }
+
+    // Geen hartjes meer modaal
+    function showNoHeartsModal() {
+      openModal(`
+        <div class="p-6 text-center space-y-4">
+          <div class="text-5xl">💔</div>
+          <h3 class="text-xl font-black text-slate-800">Je hartjes zijn even op!</h3>
+          <p class="text-sm text-slate-600">Geen zorgen: je kunt direct gratis hartjes terugverdienen met een korte herhaalronde, of 20 edelstenen inwisselen.</p>
+          <div class="space-y-2.5 pt-2">
+            <button onclick="closeModal(); startReviewSession('hearts')" class="duo-btn w-full py-3.5 rounded-2xl bg-[#58CC02] border-b-4 border-[#46A302] text-white font-extrabold text-sm">❤️ Gratis hartjes verdienen (5 vragen)</button>
+            <button onclick="buyHeartsWithGems()" class="duo-btn w-full py-3 rounded-2xl bg-[#1CB0F6] border-b-4 border-[#1899D6] text-white font-extrabold text-sm">💎 Vul aan naar 5 hartjes (20 gems)</button>
+            <button onclick="closeModal()" class="w-full py-2 text-slate-500 font-bold text-sm">Later verdergaan</button>
+          </div>
+        </div>
+      `);
+    }
+
+    function buyHeartsWithGems() {
+      if (AppState.gems < 20) {
+        showToast('Niet genoeg edelstenen! Gebruik de gratis herhaalronde.', 'error');
+        return;
+      }
+      AppState.gems -= 20;
+      AppState.hearts = 5;
+      saveState();
+      closeModal();
+      SoundFX.correct();
+      showToast('❤️ Je hebt weer 5 volle hartjes!', 'success');
+      render();
+    }
+
+    // -------------------------
+    // 8. LES-, HERHAAL- & EXAMEN-ENGINE
+    // -------------------------
+    function isLevelUnlocked(levelId) {
+      return AppState.settings.unlockAllPreview || levelId <= AppState.unlockedLevel;
+    }
+
+    function isTaskDone(levelId, taskIdx) {
+      return (AppState.completedTasks[String(levelId)] || []).includes(taskIdx);
+    }
+
+    function isTaskUnlocked(levelId, taskIdx) {
+      if (AppState.settings.unlockAllPreview) return true;
+      if (!isLevelUnlocked(levelId)) return false;
+      if (taskIdx === 0) return true;
+      return isTaskDone(levelId, taskIdx - 1);
+    }
+
+    function isExamUnlocked(levelId) {
+      if (AppState.settings.unlockAllPreview) return true;
+      if (!isLevelUnlocked(levelId)) return false;
+      const done = AppState.completedTasks[String(levelId)] || [];
+      return done.length >= 10;
+    }
+
+    function startTaskSession(levelId, taskIdx) {
+      if (!isTaskUnlocked(levelId, taskIdx)) {
+        showToast('Rond eerst de vorige opdracht af!', 'info');
+        return;
+      }
+      if (AppState.hearts <= 0) {
+        showNoHeartsModal();
+        return;
+      }
+      SoundFX.pop();
+      const exercises = generateTaskExercises(levelId, taskIdx);
+      UI.session = {
+        mode: 'task',
+        levelId,
+        taskIdx,
+        title: `Niveau ${levelId} • ${TASK_TITLES[taskIdx].name}`,
+        queue: exercises,
+        mistakeQueue: [],
+        inRetryPhase: false,
+        index: 0,
+        totalInitial: exercises.length,
+        correctFirstTry: 0,
+        wrongCount: 0,
+        combo: 0,
+        maxCombo: 0,
+        // Status voor huidige oefening
+        selectedOption: null,
+        builtTokens: [],
+        matchState: { selectedLeft: null, selectedRight: null, matchedIds: [], wrongFlash: false },
+        feedback: null, // null | { correct: bool, message: string, detail: string }
+        finished: false
+      };
+      render();
+      autoPlayIfListen();
+    }
+
+    function startExamSession(levelId) {
+      if (!isExamUnlocked(levelId)) {
+        showToast('Voltooi eerst alle 10 opdrachten van dit niveau!', 'info');
+        return;
+      }
+      SoundFX.pop();
+      const exercises = generateExamExercises(levelId);
+      UI.session = {
+        mode: 'exam',
+        levelId,
+        taskIdx: null,
+        title: `🏆 Niveau ${levelId} Examen`,
+        queue: exercises,
+        mistakeQueue: [],
+        inRetryPhase: false,
+        index: 0,
+        totalInitial: exercises.length,
+        correctFirstTry: 0,
+        wrongCount: 0,
+        combo: 0,
+        maxCombo: 0,
+        selectedOption: null,
+        builtTokens: [],
+        matchState: { selectedLeft: null, selectedRight: null, matchedIds: [], wrongFlash: false },
+        feedback: null,
+        finished: false
+      };
+      render();
+      autoPlayIfListen();
+    }
+
+    function startReviewSession(submode = 'srs') {
+      SoundFX.pop();
+      const exercises = generateReviewExercises(submode);
+      const titles = {
+        srs: '🔄 SRS Herhaalsessie',
+        hearts: '❤️ Hartjes Terugverdienen',
+        listen: '🎧 Luistertraining'
+      };
+      UI.session = {
+        mode: submode,
+        levelId: null,
+        taskIdx: null,
+        title: titles[submode] || 'Herhalen',
+        queue: exercises,
+        mistakeQueue: [],
+        inRetryPhase: false,
+        index: 0,
+        totalInitial: exercises.length,
+        correctFirstTry: 0,
+        wrongCount: 0,
+        combo: 0,
+        maxCombo: 0,
+        selectedOption: null,
+        builtTokens: [],
+        matchState: { selectedLeft: null, selectedRight: null, matchedIds: [], wrongFlash: false },
+        feedback: null,
+        finished: false
+      };
+      render();
+      autoPlayIfListen();
+    }
+
+    function autoPlayIfListen() {
+      const s = UI.session;
+      if (!s || s.finished) return;
+      const ex = s.queue[s.index];
+      if (ex && (ex.type === 'listen' || ex.type === 'mc_th_nl')) {
+        setTimeout(() => {
+          if (UI.session === s && !s.finished && s.queue[s.index] === ex) {
+            SpeechEngine.speak(formatThai(ex.thai), false);
+          }
+        }, 250);
+      }
+    }
+
+    function exitSessionConfirm() {
+      openModal(`
+        <div class="p-6 text-center space-y-4">
+          <div>${renderElephantSVG('sad', 70)}</div>
+          <h3 class="text-lg font-black text-slate-800">Weet je zeker dat je wilt stoppen?</h3>
+          <p class="text-sm text-slate-600">Je voortgang in deze oefening gaat dan verloren.</p>
+          <div class="space-y-2 pt-1">
+            <button onclick="closeModal()" class="duo-btn w-full py-3 rounded-2xl bg-[#1CB0F6] border-b-4 border-[#1899D6] text-white font-extrabold text-sm">Verder oefenen</button>
+            <button onclick="closeModal(); UI.session = null; render();" class="w-full py-2.5 rounded-2xl text-[#FF4B4B] font-extrabold text-sm hover:bg-red-50">Stoppen</button>
+          </div>
+        </div>
+      `);
+    }
+
+    // Interacties binnen een oefening
+    function selectOption(idx) {
+      const s = UI.session;
+      if (!s || s.feedback) return;
+      SoundFX.pop();
+      s.selectedOption = idx;
+      const ex = s.queue[s.index];
+      if (ex.type === 'mc_nl_th' && ex.options[idx]) {
+        SpeechEngine.speak(formatThai(ex.options[idx].thai), false);
+      } else if (ex.type === 'cloze' && ex.options[idx]) {
+        SpeechEngine.speak(ex.options[idx].text, false);
+      }
+      render();
+    }
+
+    function tapBankToken(uid) {
+      const s = UI.session;
+      if (!s || s.feedback) return;
+      const ex = s.queue[s.index];
+      const tok = ex.bank.find(t => t.uid === uid);
+      if (!tok || s.builtTokens.some(t => t.uid === uid)) return;
+      SoundFX.pop();
+      SpeechEngine.speak(tok.text, false);
+      s.builtTokens.push(tok);
+      render();
+    }
+
+    function removeBuiltToken(uid) {
+      const s = UI.session;
+      if (!s || s.feedback) return;
+      SoundFX.pop();
+      s.builtTokens = s.builtTokens.filter(t => t.uid !== uid);
+      render();
+    }
+
+    function tapMatchCard(side, id) {
+      const s = UI.session;
+      if (!s || s.feedback) return;
+      const ms = s.matchState;
+      if (ms.matchedIds.includes(id)) return;
+      SoundFX.pop();
+
+      const ex = s.queue[s.index];
+      if (side === 'left') {
+        ms.selectedLeft = id;
+        const item = ex.leftItems.find(x => x.id === id);
+        if (item) SpeechEngine.speak(formatThai(item.thai), false);
+      } else {
+        ms.selectedRight = id;
+      }
+
+      if (ms.selectedLeft && ms.selectedRight) {
+        if (ms.selectedLeft === ms.selectedRight) {
+          ms.matchedIds.push(ms.selectedLeft);
+          updateSRS(ms.selectedLeft, true);
+          ms.selectedLeft = null;
+          ms.selectedRight = null;
+          SoundFX.correct();
+
+          // Alle paren gekoppeld?
+          if (ms.matchedIds.length === ex.leftItems.length) {
+            finalizeExerciseResult(true, 'Super! Alle 4 paren goed gekoppeld!');
+            return;
+          }
+        } else {
+          SoundFX.wrong();
+          updateSRS(ms.selectedLeft, false);
+          ms.wrongFlash = true;
+          render();
+          setTimeout(() => {
+            if (UI.session === s) {
+              ms.selectedLeft = null;
+              ms.selectedRight = null;
+              ms.wrongFlash = false;
+              render();
+            }
+          }, 420);
+          return;
+        }
+      }
+      render();
+    }
+
+    function checkCurrentAnswer() {
+      const s = UI.session;
+      if (!s || s.feedback) return;
+      const ex = s.queue[s.index];
+      let isCorrect = false;
+
+      if (ex.type === 'mc_th_nl' || ex.type === 'mc_nl_th' || ex.type === 'listen' || ex.type === 'cloze') {
+        if (s.selectedOption === null) return;
+        isCorrect = !!ex.options[s.selectedOption]?.isCorrect;
+      } else if (ex.type === 'build_sentence') {
+        if (s.builtTokens.length === 0) return;
+        const userStr = s.builtTokens.map(t => t.text).join(' ');
+        const targetStr = ex.correctTokens.join(' ');
+        isCorrect = userStr === targetStr;
+      }
+
+      if (ex.wordId) {
+        updateSRS(ex.wordId, isCorrect);
+      }
+
+      finalizeExerciseResult(isCorrect);
+    }
+
+    function finalizeExerciseResult(isCorrect, customSuccessMsg = null) {
+      const s = UI.session;
+      const ex = s.queue[s.index];
+
+      if (isCorrect) {
+        SoundFX.correct();
+        s.combo += 1;
+        if (s.combo > s.maxCombo) s.maxCombo = s.combo;
+        if (!s.inRetryPhase) s.correctFirstTry += 1;
+        const praise = customSuccessMsg || (s.combo >= 3 ? `Geweldig! ${s.combo} op een rij! 🔥` : shuffle(['Uitstekend!', 'Helemaal goed!', 'Goed bezig!', 'Top gedaan!'])[0]);
+        s.feedback = {
+          correct: true,
+          message: praise,
+          detail: ex.fullThai ? `${formatThai(ex.fullThai)} — ${formatPhonetic(ex.fullPhonetic)}` : ex.answerText
+        };
+      } else {
+        SoundFX.wrong();
+        s.combo = 0;
+        s.wrongCount += 1;
+
+        // Bij reguliere opdracht verlies je een hartje (niet bij examen of hartjes-verdienen)
+        if (s.mode === 'task') {
+          AppState.hearts = Math.max(0, AppState.hearts - 1);
+          AppState.lastHeartRegen = Date.now();
+          saveState();
+        }
+
+        // Didactische fout-herhaling: zet foute vraag in de herhaalwachtrij (behalve bij examen)
+        if (s.mode !== 'exam') {
+          s.mistakeQueue.push(ex);
+        }
+
+        s.feedback = {
+          correct: false,
+          message: 'Bijna! Onthoud het juiste antwoord:',
+          detail: ex.answerText
+        };
+      }
+      render();
+    }
+
+    function nextExercise() {
+      const s = UI.session;
+      if (!s) return;
+
+      // Controleer of hartjes op zijn in taakmodus
+      if (s.mode === 'task' && AppState.hearts <= 0) {
+        UI.session = null;
+        render();
+        showNoHeartsModal();
+        return;
+      }
+
+      s.feedback = null;
+      s.selectedOption = null;
+      s.builtTokens = [];
+      s.matchState = { selectedLeft: null, selectedRight: null, matchedIds: [], wrongFlash: false };
+
+      if (s.index + 1 < s.queue.length) {
+        s.index += 1;
+        render();
+        autoPlayIfListen();
+        return;
+      }
+
+      // Einde van hoofdronde: zijn er fouten om te herhalen? (Duolingo fout-correctie)
+      if (!s.inRetryPhase && s.mistakeQueue.length > 0 && s.mode !== 'exam') {
+        s.inRetryPhase = true;
+        s.queue = [...s.mistakeQueue];
+        s.mistakeQueue = [];
+        s.index = 0;
+        showToast('🔁 Laten we je fouten nog een keer verbeteren!', 'info');
+        render();
+        autoPlayIfListen();
+        return;
+      }
+
+      // Sessie afgerond!
+      completeSession();
+    }
+
+    function completeSession() {
+      const s = UI.session;
+      s.finished = true;
+
+      const accuracy = Math.round((s.correctFirstTry / Math.max(1, s.totalInitial)) * 100);
+      let earnedXp = 0;
+      let earnedGems = 0;
+      let examPassed = false;
+
+      if (s.mode === 'task') {
+        earnedXp = 15 + (s.wrongCount === 0 ? 5 : 0);
+        earnedGems = s.wrongCount === 0 ? 10 : 5;
+        const key = String(s.levelId);
+        if (!AppState.completedTasks[key]) AppState.completedTasks[key] = [];
+        if (!AppState.completedTasks[key].includes(s.taskIdx)) {
+          AppState.completedTasks[key].push(s.taskIdx);
+        }
+        AppState.totalLessons += 1;
+        if (s.wrongCount === 0) AppState.perfectLessons += 1;
+        AppState.gems += earnedGems;
+        recordActivityXp(earnedXp);
+        SoundFX.complete();
+      } else if (s.mode === 'exam') {
+        examPassed = accuracy >= 80;
+        if (examPassed) {
+          earnedXp = 40;
+          earnedGems = 25;
+          if (!AppState.passedExams.includes(s.levelId)) {
+            AppState.passedExams.push(s.levelId);
+          }
+          if (AppState.unlockedLevel <= s.levelId && s.levelId < 20) {
+            AppState.unlockedLevel = s.levelId + 1;
+          }
+          AppState.gems += earnedGems;
+          recordActivityXp(earnedXp);
+          SoundFX.complete();
+        } else {
+          earnedXp = 10;
+          recordActivityXp(earnedXp);
+          SoundFX.fail();
+        }
+      } else if (s.mode === 'hearts') {
+        earnedXp = 10;
+        AppState.hearts = Math.min(5, AppState.hearts + 2);
+        recordActivityXp(earnedXp);
+        SoundFX.complete();
+      } else {
+        earnedXp = 15;
+        earnedGems = 5;
+        AppState.gems += earnedGems;
+        recordActivityXp(earnedXp);
+        SoundFX.complete();
+      }
+
+      s.summary = { accuracy, earnedXp, earnedGems, examPassed };
+      saveState();
+      render();
+    }
+
+    // -------------------------
+    // 9. HOOFDRENDERER (COMPONENTEN)
+    // -------------------------
+    function render() {
+      const root = document.getElementById('app');
+      if (UI.session) {
+        root.innerHTML = renderSessionScreen();
+      } else {
+        root.innerHTML = `
+          ${renderTopBar()}
+          <main class="flex-1 overflow-y-auto pb-24">
+            ${UI.tab === 'learn' ? renderLearnTab() : ''}
+            ${UI.tab === 'review' ? renderReviewTab() : ''}
+            ${UI.tab === 'words' ? renderWordsTab() : ''}
+            ${UI.tab === 'profile' ? renderProfileTab() : ''}
+          </main>
+          ${renderBottomNav()}
+        `;
+      }
+    }
+
+    // Bovenbalk met Streak, Gems, Hartjes + snelle schakelaars (Man/Vrouw, Fonetiek, Geluid)
+    function renderTopBar() {
+      const isMale = AppState.settings.gender === 'male';
+      const goalPct = Math.min(100, Math.round((AppState.dailyXp / AppState.dailyGoal) * 100));
+
+      return `
+        <header class="sticky top-0 z-30 bg-white/95 backdrop-blur-xs border-b-2 border-slate-100 px-3 pt-2.5 pb-2">
+          <!-- Rij 1: Logo + Gamification Stats -->
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-1.5">
+              <span class="text-xl" title="Thais leren">🇹🇭</span>
+              <span class="font-black text-base tracking-tight text-[#58CC02]">Sawasdee<span class="text-slate-800">Lingo</span></span>
+            </div>
+            <div class="flex items-center gap-2.5 text-sm font-extrabold">
+              <div class="flex items-center gap-1 text-orange-500" title="Dagelijkse streak">
+                <span>🔥</span><span>${AppState.streak}</span>
+              </div>
+              <div class="flex items-center gap-1 text-sky-500" title="Edelstenen">
+                <span>💎</span><span>${AppState.gems}</span>
+              </div>
+              <button onclick="${AppState.hearts < 5 ? 'showNoHeartsModal()' : "showToast('Je hebt 5 volle hartjes! ❤️', 'success')"}" class="flex items-center gap-1 text-rose-500" title="Hartjes">
+                <span>❤️</span><span>${AppState.hearts}</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Rij 2: Beleefdheidsvorm (Man/Vrouw) + Fonetiek + Geluid + Dagdoelbalk -->
+          <div class="flex items-center justify-between gap-1.5 mt-2">
+            <div class="flex items-center gap-1.5">
+              <button onclick="toggleGender()" class="px-2.5 py-1 rounded-xl text-xs font-extrabold border-2 transition-colors ${isMale ? 'bg-sky-50 border-sky-200 text-sky-700' : 'bg-pink-50 border-pink-200 text-pink-700'}" title="Schakel tussen mannelijke en vrouwelijke beleefdheidsvorm">
+                ${isMale ? '👨 Man (ครับ)' : '👩 Vrouw (ค่ะ)'}
+              </button>
+              <button onclick="togglePhonetics()" class="px-2 py-1 rounded-xl text-xs font-extrabold border-2 transition-colors ${AppState.settings.showPhonetics ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-slate-100 border-slate-200 text-slate-400'}" title="Fonetische uitspraak aan/uit">
+                ABC ${AppState.settings.showPhonetics ? 'AAN' : 'UIT'}
+              </button>
+              <button onclick="toggleSound()" class="px-2 py-1 rounded-xl text-xs font-extrabold border-2 ${AppState.settings.soundOn ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-slate-100 border-slate-200 text-slate-400'}" title="Geluidseffecten aan/uit">
+                ${AppState.settings.soundOn ? '🔊' : '🔇'}
+              </button>
+            </div>
+            <div class="flex items-center gap-1.5" title="Dagdoel: ${AppState.dailyXp} / ${AppState.dailyGoal} XP">
+              <div class="w-16 h-2.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
+                <div class="h-full bg-[#FFC800] rounded-full transition-all duration-300" style="width:${goalPct}%"></div>
+              </div>
+              <span class="text-[11px] font-extrabold text-amber-600">${AppState.dailyXp}/${AppState.dailyGoal}</span>
+            </div>
+          </div>
+        </header>
+      `;
+    }
+
+    // Tab 1: LEREN (Duolingo S-Curve Leerpad voor alle 20 niveaus)
+    function renderLearnTab() {
+      const currentActiveLevel = AppState.unlockedLevel;
+      const dueCount = getDueWords().length;
+
+      return `
+        <div class="px-4 py-4 space-y-6">
+          <!-- Welkomstkaart & Snelle herhaalmelding -->
+          <div class="p-4 rounded-3xl bg-gradient-to-r from-[#58CC02] to-[#46A302] text-white shadow-md flex items-center justify-between gap-3">
+            <div class="space-y-1">
+              <div class="text-xs font-extrabold uppercase tracking-wider opacity-90">Niveau ${currentActiveLevel} van 20 • ${AppState.xp} XP</div>
+              <div class="font-black text-base leading-snug">สวัสดี${formatThai('{P}')}! Klaar voor je Thaise les?</div>
+              <div class="flex items-center gap-2 pt-1">
+                <button onclick="showTourModal(0)" class="px-3 py-1 rounded-xl bg-white/20 hover:bg-white/30 text-xs font-extrabold">📖 Hoe werkt het?</button>
+                ${dueCount > 0 ? `<button onclick="switchTab('review')" class="px-3 py-1 rounded-xl bg-[#FFC800] text-amber-950 text-xs font-extrabold">🔄 ${dueCount} herhalen</button>` : ''}
+              </div>
+            </div>
+            <div class="animate-float">${renderElephantSVG('happy', 66)}</div>
+          </div>
+
+          <!-- Alle 20 Niveaus -->
+          ${LEVELS.map(lvl => renderLevelSection(lvl)).join('')}
+        </div>
+      `;
+    }
+
+    function renderLevelSection(lvl) {
+      const unlocked = isLevelUnlocked(lvl.id);
+      const doneArr = AppState.completedTasks[String(lvl.id)] || [];
+      const examPassed = AppState.passedExams.includes(lvl.id);
+      const examUnlocked = isExamUnlocked(lvl.id);
+
+      // Standaard het huidige actieve niveau openklappen; afgeronde of vergrendelde kunnen ingeklapt/opengeklapt worden
+      const isExpanded = UI.expandedLevel !== null
+        ? UI.expandedLevel === lvl.id
+        : (lvl.id === AppState.unlockedLevel);
+
+      // S-curve horizontale verschuiving voor Duolingo kronkelpad
+      const offsets = [0, 38, 62, 38, 0, -38, -62, -38, 0, 34];
+
+      return `
+        <section class="rounded-3xl border-2 overflow-hidden transition-all ${unlocked ? 'border-slate-200 bg-white shadow-sm' : 'border-slate-200 bg-slate-50 opacity-85'}">
+          <!-- Niveau Banner -->
+          <div class="p-4 text-white flex items-center justify-between gap-3 cursor-pointer select-none"
+               style="background:${unlocked ? lvl.color.bg : '#94A3B8'}; border-bottom: 4px solid ${unlocked ? lvl.color.dark : '#64748B'}"
+               onclick="toggleLevelExpand(${lvl.id})">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-11 h-11 rounded-2xl bg-white/20 flex items-center justify-center text-2xl shrink-0">
+                ${unlocked ? lvl.icon : '🔒'}
+              </div>
+              <div class="min-w-0">
+                <div class="text-[11px] font-extrabold uppercase tracking-wider opacity-90 flex items-center gap-1.5">
+                  <span>Niveau ${lvl.id}</span>
+                  <span>•</span>
+                  <span>${doneArr.length}/10 opdrachten</span>
+                  ${examPassed ? '<span class="px-1.5 py-0.5 rounded-md bg-white/25">✓ Gehaald</span>' : ''}
+                </div>
+                <h2 class="font-black text-base leading-tight truncate">${lvl.title}</h2>
+                <p class="text-xs opacity-90 truncate mt-0.5">${lvl.subtitle}</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <button onclick="event.stopPropagation(); showLevelTip(${lvl.id})" class="px-2.5 py-1.5 rounded-xl bg-white/20 hover:bg-white/30 text-xs font-extrabold" title="Taaltip bekijken">
+                💡 Tip
+              </button>
+              <span class="text-sm font-black w-6 text-center">${isExpanded ? '▲' : '▼'}</span>
+            </div>
+          </div>
+
+          <!-- Uitgeklapt Kronkelend Leerpad (10 Opdrachten + Niveau-Examen) -->
+          ${isExpanded ? `
+            <div class="px-4 py-6 bg-gradient-to-b from-white to-slate-50/70">
+              ${!unlocked ? `
+                <div class="text-center py-4 px-3 rounded-2xl bg-slate-100 border border-slate-200 mb-4">
+                  <div class="text-2xl mb-1">🔒</div>
+                  <div class="text-sm font-extrabold text-slate-700">Nog vergrendeld</div>
+                  <p class="text-xs text-slate-500 mt-1">Haal eerst het <b>Niveau ${lvl.id - 1} Examen</b> (min. 80%) om dit niveau vrij te spelen.</p>
+                </div>
+              ` : ''}
+
+              <div class="flex flex-col items-center gap-4 relative">
+                ${TASK_TITLES.map((t, idx) => {
+                  const done = isTaskDone(lvl.id, idx);
+                  const taskUnlocked = isTaskUnlocked(lvl.id, idx);
+                  const isCurrent = taskUnlocked && !done && unlocked;
+                  const xOff = offsets[idx % offsets.length];
+
+                  const btnBg = done
+                    ? lvl.color.bg
+                    : isCurrent
+                      ? lvl.color.bg
+                      : '#E2E8F0';
+                  const btnBorder = done
+                    ? lvl.color.dark
+                    : isCurrent
+                      ? lvl.color.dark
+                      : '#CBD5E1';
+
+                  return `
+                    <div class="flex flex-col items-center relative" style="transform: translateX(${xOff}px)">
+                      ${isCurrent ? `<div class="mb-1.5 px-3 py-1 rounded-xl bg-white border-2 border-slate-200 shadow-sm text-[11px] font-black uppercase tracking-wide animate-bounce" style="color:${lvl.color.text}">START!</div>` : ''}
+                      <button
+                        onclick="startTaskSession(${lvl.id}, ${idx})"
+                        class="duo-btn w-16 h-16 rounded-full flex items-center justify-center text-2xl shadow-md relative ${isCurrent ? 'pulse-active ring-4 ring-offset-2 ring-[#58CC02]/40' : ''}"
+                        style="background:${btnBg}; border-bottom: 6px solid ${btnBorder}; color:${done || isCurrent ? '#fff' : '#94A3B8'}"
+                        aria-label="Niveau ${lvl.id} Opdracht ${idx + 1}: ${t.name}">
+                        ${done ? '⭐' : taskUnlocked ? t.icon : '🔒'}
+                        <span class="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-white border-2 border-slate-200 text-[11px] font-black text-slate-700 flex items-center justify-center shadow-xs">${idx + 1}</span>
+                      </button>
+                      <div class="mt-1.5 text-center max-w-[140px]">
+                        <div class="text-xs font-extrabold ${taskUnlocked ? 'text-slate-800' : 'text-slate-400'} leading-tight">${t.name}</div>
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+
+                <!-- Verplichte Niveau-Examen Trofee Knoop -->
+                <div class="mt-3 pt-4 border-t-2 border-dashed border-slate-200 w-full flex flex-col items-center">
+                  <button
+                    onclick="startExamSession(${lvl.id})"
+                    class="duo-btn w-20 h-20 rounded-3xl flex flex-col items-center justify-center shadow-lg relative ${examUnlocked && !examPassed ? 'pulse-active' : ''}"
+                    style="background:${examPassed ? '#FFC800' : examUnlocked ? '#FFC800' : '#E2E8F0'}; border-bottom: 6px solid ${examUnlocked || examPassed ? '#D9A600' : '#CBD5E1'}">
+                    <span class="text-3xl">${examPassed ? '👑' : examUnlocked ? '🏆' : '🔒'}</span>
+                  </button>
+                  <div class="mt-2 text-center">
+                    <div class="text-sm font-black ${examUnlocked ? 'text-amber-700' : 'text-slate-400'}">Niveau ${lvl.id} Examen</div>
+                    <div class="text-xs text-slate-500 font-semibold max-w-[240px]">
+                      ${examPassed
+                        ? '✅ Geslaagd! Je kunt altijd opnieuw oefenen.'
+                        : examUnlocked
+                          ? '10 vragen (huidig + eerdere niveaus) • Min. 80% voor Niveau ' + Math.min(20, lvl.id + 1)
+                          : 'Voltooi eerst alle 10 opdrachten om het examen vrij te spelen'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ` : ''}
+        </section>
+      `;
+    }
+
+    // Tab 2: HERHALEN (Wetenschappelijke SRS Oefenruimte + Hartjes verdienen)
+    function renderReviewTab() {
+      const due = getDueWords();
+      const weak = getWeakWords(20);
+      const boxCounts = [0, 0, 0, 0, 0, 0];
+      Object.values(AppState.srs).forEach(d => {
+        boxCounts[Math.min(5, Math.max(0, d.box))] += 1;
+      });
+      const totalLearned = Object.keys(AppState.srs).length;
+
+      return `
+        <div class="p-4 space-y-5">
+          <div class="p-5 rounded-3xl bg-gradient-to-br from-[#1CB0F6] to-[#1899D6] text-white shadow-md flex items-center justify-between gap-3">
+            <div>
+              <div class="text-xs font-extrabold uppercase tracking-wider opacity-90">Wetenschappelijke Didactiek</div>
+              <h2 class="text-xl font-black mt-0.5">Spaced Repetition (SRS)</h2>
+              <p class="text-xs opacity-95 mt-1 leading-relaxed">Herhaal woorden precies voordat je ze vergeet. Zo blijven ze in je langetermijngeheugen!</p>
+            </div>
+            ${renderElephantSVG('happy', 64)}
+          </div>
+
+          <!-- Actiekaarten -->
+          <div class="space-y-3">
+            <button onclick="startReviewSession('srs')" class="duo-btn w-full p-4 rounded-2xl bg-[#58CC02] border-b-4 border-[#46A302] text-white flex items-center justify-between text-left">
+              <div class="flex items-center gap-3">
+                <span class="text-3xl">🔄</span>
+                <div>
+                  <div class="font-black text-base">Slimme SRS Herhaling</div>
+                  <div class="text-xs opacity-90">${due.length > 0 ? `${due.length} woorden staan klaar voor herhaling` : 'Mix van je geleerde woorden (8 oefeningen)'}</div>
+                </div>
+              </div>
+              <span class="font-black text-lg">→</span>
+            </button>
+
+            <button onclick="startReviewSession('hearts')" class="duo-btn w-full p-4 rounded-2xl bg-[#FF4B4B] border-b-4 border-[#D63030] text-white flex items-center justify-between text-left">
+              <div class="flex items-center gap-3">
+                <span class="text-3xl">❤️</span>
+                <div>
+                  <div class="font-black text-base">Hartjes Terugverdienen</div>
+                  <div class="text-xs opacity-90">Korte opfrisronde van 5 vragen • Verdien +2 hartjes!</div>
+                </div>
+              </div>
+              <span class="font-black text-lg">+2</span>
+            </button>
+
+            <button onclick="startReviewSession('listen')" class="duo-btn w-full p-4 rounded-2xl bg-[#CE82FF] border-b-4 border-[#A55CE0] text-white flex items-center justify-between text-left">
+              <div class="flex items-center gap-3">
+                <span class="text-3xl">🎧</span>
+                <div>
+                  <div class="font-black text-base">Luister- & Toontraining</div>
+                  <div class="text-xs opacity-90">Train je oren op Thaise uitspraak en melodie</div>
+                </div>
+              </div>
+              <span class="font-black text-lg">→</span>
+            </button>
+          </div>
+
+          <!-- Leitner-Box Overzicht -->
+          <div class="p-4 rounded-3xl border-2 border-slate-200 bg-white space-y-3">
+            <div class="flex items-center justify-between">
+              <h3 class="font-black text-slate-800 text-sm">Jouw Geheugenboxen (Leitner)</h3>
+              <span class="text-xs font-extrabold text-sky-600">${totalLearned} / ${ALL_WORDS.length} woorden</span>
+            </div>
+            <div class="grid grid-cols-5 gap-2 text-center">
+              ${[1, 2, 3, 4, 5].map(b => {
+                const labels = ['', 'Nieuw', '1 dag', '3 dgn', '7 dgn', 'Meester'];
+                const colors = ['', 'bg-rose-100 text-rose-700', 'bg-orange-100 text-orange-700', 'bg-amber-100 text-amber-700', 'bg-sky-100 text-sky-700', 'bg-emerald-100 text-emerald-700'];
+                return `
+                  <div class="p-2 rounded-2xl ${colors[b]}">
+                    <div class="text-lg font-black">${boxCounts[b]}</div>
+                    <div class="text-[10px] font-extrabold uppercase">${labels[b]}</div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+
+          <!-- Zwakke woorden lijst -->
+          ${weak.length > 0 ? `
+            <div class="p-4 rounded-3xl border-2 border-slate-200 bg-white space-y-2.5">
+              <h3 class="font-black text-slate-800 text-sm">Aandachtspunten (${weak.slice(0, 6).length})</h3>
+              <div class="space-y-2">
+                ${weak.slice(0, 6).map(w => `
+                  <button onclick="SpeechEngine.speak('${formatThai(w.th).replace(/'/g, "\\'")}')" class="w-full p-3 rounded-2xl bg-slate-50 hover:bg-slate-100 border border-slate-200 flex items-center justify-between text-left">
+                    <div>
+                      <div class="thai-text font-bold text-slate-900">${formatThai(w.th)}</div>
+                      <div class="text-xs font-bold text-sky-600">${formatPhonetic(w.ph)}</div>
+                    </div>
+                    <div class="text-right">
+                      <div class="text-xs font-extrabold text-slate-700">${w.nl}</div>
+                      <div class="text-[11px] text-slate-400">Niveau ${w.levelId} 🔊</div>
+                    </div>
+                  </button>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+
+    // Tab 3: WOORDEN (Doorzoekbaar Woordenboek met SRS-sterren & directe audio)
+    function renderWordsTab() {
+      const q = UI.wordSearch.trim().toLowerCase();
+      const filtered = ALL_WORDS.filter(w => {
+        if (UI.wordFilterLevel !== 'all' && w.levelId !== Number(UI.wordFilterLevel)) return false;
+        if (!q) return true;
+        return (
+          w.nl.toLowerCase().includes(q) ||
+          formatPhonetic(w.ph).toLowerCase().includes(q) ||
+          formatThai(w.th).toLowerCase().includes(q)
+        );
+      });
+
+      return `
+        <div class="p-4 space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="text-xl font-black text-slate-800">Woordenboek</h2>
+              <p class="text-xs font-bold text-slate-500">${ALL_WORDS.length} authentieke Thaise woorden — tik om te luisteren</p>
+            </div>
+            <span class="text-2xl">📚</span>
+          </div>
+
+          <!-- Zoekbalk & Niveaufilter -->
+          <div class="flex gap-2">
+            <input
+              type="text"
+              value="${UI.wordSearch.replace(/"/g, '&quot;')}"
+              oninput="UI.wordSearch = this.value; render();"
+              placeholder="Zoek NL, fonetiek of Thais..."
+              class="flex-1 px-3.5 py-2.5 rounded-2xl border-2 border-slate-200 focus:border-[#1CB0F6] outline-none text-sm font-bold" />
+            <select onchange="UI.wordFilterLevel = this.value; render();" class="px-3 py-2.5 rounded-2xl border-2 border-slate-200 bg-white text-xs font-extrabold text-slate-700">
+              <option value="all" ${UI.wordFilterLevel === 'all' ? 'selected' : ''}>Alle 20</option>
+              ${LEVELS.map(l => `<option value="${l.id}" ${String(UI.wordFilterLevel) === String(l.id) ? 'selected' : ''}>Niv. ${l.id}</option>`).join('')}
+            </select>
+          </div>
+
+          <!-- Woordenlijst -->
+          <div class="space-y-2">
+            ${filtered.length === 0 ? `
+              <div class="text-center py-10 text-slate-400 font-bold text-sm">Geen woorden gevonden voor "${UI.wordSearch}"</div>
+            ` : filtered.map(w => {
+              const srs = AppState.srs[w.id];
+              const box = srs ? srs.box : 0;
+              const unlocked = isLevelUnlocked(w.levelId);
+              return `
+                <div class="p-3.5 rounded-2xl border-2 ${unlocked ? 'border-slate-200 bg-white' : 'border-slate-100 bg-slate-50/70'} flex items-center justify-between gap-2">
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2">
+                      <span class="thai-text font-bold text-lg text-slate-900">${formatThai(w.th)}</span>
+                      <span class="text-[10px] font-extrabold px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-500">Niv. ${w.levelId}</span>
+                    </div>
+                    ${AppState.settings.showPhonetics ? `<div class="text-xs font-extrabold text-sky-600">${formatPhonetic(w.ph)} <span class="text-slate-400 font-semibold">(${w.tone})</span></div>` : ''}
+                    <div class="text-sm font-bold text-slate-700 mt-0.5">${w.nl}</div>
+                    ${w.note ? `<div class="text-[11px] text-slate-400 mt-0.5">💡 ${w.note}</div>` : ''}
+                  </div>
+                  <div class="flex flex-col items-end gap-1.5 shrink-0">
+                    <div class="flex gap-1">
+                      <button onclick="SpeechEngine.speak('${formatThai(w.th).replace(/'/g, "\\'")}', false)" class="duo-btn w-9 h-9 rounded-xl bg-sky-50 border-b-2 border-sky-200 text-sky-600 flex items-center justify-center text-base" title="Normale snelheid">🔊</button>
+                      <button onclick="SpeechEngine.speak('${formatThai(w.th).replace(/'/g, "\\'")}', true)" class="duo-btn w-9 h-9 rounded-xl bg-emerald-50 border-b-2 border-emerald-200 text-emerald-600 flex items-center justify-center text-sm" title="Langzaam (schildpad)">🐢</button>
+                    </div>
+                    <div class="text-[11px] tracking-tighter" title="SRS Beheersing: Box ${box}/5">
+                      ${'★'.repeat(box)}<span class="text-slate-200">${'★'.repeat(5 - box)}</span>
+                    </div>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // Tab 4: PROFIEL (Voortgang, Badges, Instellingen, Tour, Export/Import, Reset)
+    function renderProfileTab() {
+      const completedTasksTotal = Object.values(AppState.completedTasks).reduce((sum, arr) => sum + arr.length, 0);
+      const isMale = AppState.settings.gender === 'male';
+
+      return `
+        <div class="p-4 space-y-5">
+          <!-- Profiel Header -->
+          <div class="p-5 rounded-3xl bg-slate-900 text-white flex items-center gap-4">
+            ${renderElephantSVG('happy', 70)}
+            <div>
+              <div class="text-xs font-extrabold uppercase tracking-wider text-[#58CC02]">Thais Leerder • Lokaal Opgeslagen</div>
+              <h2 class="text-xl font-black mt-0.5">Sawasdee Reiziger</h2>
+              <p class="text-xs text-slate-300 mt-0.5">Niveau ${AppState.unlockedLevel} van 20 • ${AppState.passedExams.length} examens gehaald</p>
+            </div>
+          </div>
+
+          <!-- Statistieken Grid -->
+          <div class="grid grid-cols-2 gap-3">
+            <div class="p-3.5 rounded-2xl border-2 border-slate-200 bg-white">
+              <div class="text-xs font-extrabold text-slate-400 uppercase">Totaal XP</div>
+              <div class="text-2xl font-black text-amber-500 mt-0.5">⚡ ${AppState.xp}</div>
+            </div>
+            <div class="p-3.5 rounded-2xl border-2 border-slate-200 bg-white">
+              <div class="text-xs font-extrabold text-slate-400 uppercase">Dagelijkse Streak</div>
+              <div class="text-2xl font-black text-orange-500 mt-0.5">🔥 ${AppState.streak} dgn</div>
+            </div>
+            <div class="p-3.5 rounded-2xl border-2 border-slate-200 bg-white">
+              <div class="text-xs font-extrabold text-slate-400 uppercase">Opdrachten</div>
+              <div class="text-2xl font-black text-[#58CC02] mt-0.5">✅ ${completedTasksTotal}/200</div>
+            </div>
+            <div class="p-3.5 rounded-2xl border-2 border-slate-200 bg-white">
+              <div class="text-xs font-extrabold text-slate-400 uppercase">Woorden Geoefend</div>
+              <div class="text-2xl font-black text-sky-500 mt-0.5">📚 ${Object.keys(AppState.srs).length}/${ALL_WORDS.length}</div>
+            </div>
+          </div>
+
+          <!-- Prestatie-badges -->
+          <div class="p-4 rounded-3xl border-2 border-slate-200 bg-white space-y-3">
+            <h3 class="font-black text-slate-800 text-sm">Prestatie-badges (${AppState.badges.length}/${BADGES.length})</h3>
+            <div class="grid grid-cols-2 gap-2.5">
+              ${BADGES.map(b => {
+                const earned = AppState.badges.includes(b.id);
+                return `
+                  <div class="p-3 rounded-2xl border-2 ${earned ? 'border-amber-300 bg-amber-50/70' : 'border-slate-100 bg-slate-50 opacity-55'} flex items-center gap-2.5">
+                    <span class="text-2xl ${earned ? '' : 'grayscale'}">${b.icon}</span>
+                    <div class="min-w-0">
+                      <div class="text-xs font-black text-slate-800 truncate">${b.title}</div>
+                      <div class="text-[10px] font-semibold text-slate-500 leading-tight">${b.desc}</div>
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+
+          <!-- Leerinstellingen -->
+          <div class="p-4 rounded-3xl border-2 border-slate-200 bg-white space-y-3">
+            <h3 class="font-black text-slate-800 text-sm">Instellingen</h3>
+
+            <!-- Beleefdheidsvorm -->
+            <div class="flex items-center justify-between py-1">
+              <div>
+                <div class="text-sm font-extrabold text-slate-800">Beleefdheidsvorm</div>
+                <div class="text-xs text-slate-500">Past ครับ/ผม en ค่ะ/ฉัน automatisch aan</div>
+              </div>
+              <button onclick="toggleGender()" class="px-3 py-1.5 rounded-xl font-extrabold text-xs border-2 ${isMale ? 'bg-sky-50 border-sky-300 text-sky-700' : 'bg-pink-50 border-pink-300 text-pink-700'}">
+                ${isMale ? '👨 Man (ครับ)' : '👩 Vrouw (ค่ะ)'}
+              </button>
+            </div>
+
+            <!-- Fonetiek -->
+            <div class="flex items-center justify-between py-1 border-t border-slate-100">
+              <div>
+                <div class="text-sm font-extrabold text-slate-800">Fonetische uitspraak</div>
+                <div class="text-xs text-slate-500">Zet uit om puur Thais schrift te oefenen</div>
+              </div>
+              <button onclick="togglePhonetics()" class="px-3 py-1.5 rounded-xl font-extrabold text-xs border-2 ${AppState.settings.showPhonetics ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-slate-100 border-slate-300 text-slate-500'}">
+                ${AppState.settings.showPhonetics ? 'AAN' : 'UIT'}
+              </button>
+            </div>
+
+            <!-- Geluid -->
+            <div class="flex items-center justify-between py-1 border-t border-slate-100">
+              <div>
+                <div class="text-sm font-extrabold text-slate-800">Geluidseffecten</div>
+                <div class="text-xs text-slate-500">Vrolijke geluiden bij antwoorden</div>
+              </div>
+              <button onclick="toggleSound()" class="px-3 py-1.5 rounded-xl font-extrabold text-xs border-2 ${AppState.settings.soundOn ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-slate-100 border-slate-300 text-slate-500'}">
+                ${AppState.settings.soundOn ? 'AAN 🔊' : 'UIT 🔇'}
+              </button>
+            </div>
+
+            <!-- Demo/Vrij verkennen schakelaar -->
+            <div class="flex items-center justify-between py-1 border-t border-slate-100">
+              <div>
+                <div class="text-sm font-extrabold text-slate-800">Alle 20 niveaus inkijken</div>
+                <div class="text-xs text-slate-500">Handig om elk niveau direct te testen</div>
+              </div>
+              <button onclick="togglePreviewUnlock()" class="px-3 py-1.5 rounded-xl font-extrabold text-xs border-2 ${AppState.settings.unlockAllPreview ? 'bg-purple-50 border-purple-300 text-purple-700' : 'bg-slate-100 border-slate-300 text-slate-500'}">
+                ${AppState.settings.unlockAllPreview ? 'OPEN 🔓' : 'PAD 🔒'}
+              </button>
+            </div>
+          </div>
+
+          <!-- Handleiding & Back-up (Export/Import/Reset) -->
+          <div class="space-y-2.5">
+            <button onclick="showTourModal(0)" class="duo-btn w-full py-3 rounded-2xl bg-[#1CB0F6] border-b-4 border-[#1899D6] text-white font-extrabold text-sm">📖 Bekijk Stap-voor-Stap Uitleg</button>
+            <div class="grid grid-cols-2 gap-2.5">
+              <button onclick="openExportModal()" class="duo-btn py-3 rounded-2xl bg-slate-100 border-b-4 border-slate-300 text-slate-700 font-extrabold text-xs">📤 Exporteer (JSON)</button>
+              <button onclick="openImportModal()" class="duo-btn py-3 rounded-2xl bg-slate-100 border-b-4 border-slate-300 text-slate-700 font-extrabold text-xs">📥 Importeer (JSON)</button>
+            </div>
+            <button onclick="confirmResetProgress()" class="w-full py-2.5 rounded-2xl text-rose-500 font-extrabold text-xs hover:bg-rose-50">🗑️ Alle voortgang wissen (Reset)</button>
+          </div>
+        </div>
+      `;
+    }
+
+    // Vaste onderste navigatiebalk (4 mobiele tabs)
+    function renderBottomNav() {
+      const tabs = [
+        { id: 'learn', label: 'Leren', icon: '🗺️' },
+        { id: 'review', label: 'Herhalen', icon: '🔄' },
+        { id: 'words', label: 'Woorden', icon: '📚' },
+        { id: 'profile', label: 'Profiel', icon: '🐘' }
+      ];
+      const dueCount = getDueWords().length;
+
+      return `
+        <nav class="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white border-t-2 border-slate-200 px-2 py-2 flex justify-around z-30">
+          ${tabs.map(t => {
+            const active = UI.tab === t.id;
+            return `
+              <button onclick="switchTab('${t.id}')" class="relative flex flex-col items-center justify-center px-3 py-1 rounded-2xl transition-colors ${active ? 'bg-emerald-50 text-[#58CC02]' : 'text-slate-400 hover:text-slate-600'}">
+                <span class="text-xl leading-none">${t.icon}</span>
+                <span class="text-[11px] font-extrabold mt-1">${t.label}</span>
+                ${t.id === 'review' && dueCount > 0 ? `<span class="absolute top-0.5 right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-black flex items-center justify-center">${dueCount > 99 ? '99+' : dueCount}</span>` : ''}
+              </button>
+            `;
+          }).join('')}
+        </nav>
+      `;
+    }
+
+    // -------------------------
+    // 10. LES- & EXAMENSCHERM RENDERER
+    // -------------------------
+    function renderSessionScreen() {
+      const s = UI.session;
+      if (s.finished) return renderSessionSummary();
+
+      const ex = s.queue[s.index];
+      const progressPct = Math.round((s.index / Math.max(1, s.queue.length)) * 100);
+
+      let canCheck = false;
+      if (ex.type === 'mc_th_nl' || ex.type === 'mc_nl_th' || ex.type === 'listen' || ex.type === 'cloze') {
+        canCheck = s.selectedOption !== null;
+      } else if (ex.type === 'build_sentence') {
+        canCheck = s.builtTokens.length > 0;
+      }
+
+      return `
+        <div class="min-h-screen flex flex-col bg-white">
+          <!-- Les Topbalk met voortgangsbalk & hartjes -->
+          <div class="px-4 pt-4 pb-3 flex items-center gap-3 border-b border-slate-100">
+            <button onclick="exitSessionConfirm()" class="w-9 h-9 rounded-xl bg-slate-100 text-slate-500 font-black text-lg flex items-center justify-center">✕</button>
+            <div class="flex-1">
+              <div class="flex items-center justify-between text-[11px] font-extrabold text-slate-400 mb-1">
+                <span class="truncate">${s.inRetryPhase ? '🔁 Fouten verbeteren' : s.title}</span>
+                <span>${s.index + 1}/${s.queue.length}</span>
+              </div>
+              <div class="w-full h-3.5 bg-slate-100 rounded-full overflow-hidden">
+                <div class="h-full rounded-full transition-all duration-300 ${s.mode === 'exam' ? 'bg-[#FFC800]' : s.inRetryPhase ? 'bg-orange-400' : 'bg-[#58CC02]'}" style="width:${Math.max(8, progressPct)}%"></div>
+              </div>
+            </div>
+            ${s.mode === 'task' ? `
+              <div class="flex items-center gap-1 font-black text-rose-500 text-sm">
+                <span>❤️</span><span>${AppState.hearts}</span>
+              </div>
+            ` : s.mode === 'exam' ? `
+              <div class="px-2 py-1 rounded-xl bg-amber-100 text-amber-800 text-xs font-black">EXAMEN</div>
+            ` : `
+              <div class="px-2 py-1 rounded-xl bg-sky-100 text-sky-700 text-xs font-black">SRS</div>
+            `}
+          </div>
+
+          <!-- Combo badge -->
+          ${s.combo >= 2 && !s.feedback ? `
+            <div class="px-4 pt-2 flex justify-center">
+              <span class="px-3 py-0.5 rounded-full bg-orange-100 text-orange-600 text-xs font-black animate-bounce-in">🔥 ${s.combo} op een rij!</span>
+            </div>
+          ` : ''}
+
+          <!-- Oefening Inhoud -->
+          <div class="flex-1 px-4 py-5 flex flex-col justify-between overflow-y-auto">
+            <div class="space-y-5">
+              <h2 class="text-lg font-black text-slate-800">${ex.promptLabel}</h2>
+              ${renderExerciseBody(ex)}
+            </div>
+          </div>
+
+          <!-- Onderste Actiebalk of Feedback-paneel -->
+          ${s.feedback ? `
+            <div class="p-4 border-t-2 animate-bounce-in ${s.feedback.correct ? 'bg-[#D7FFB8] border-[#58CC02]/30 text-[#2F6F00]' : 'bg-[#FFDFE0] border-[#FF4B4B]/30 text-[#9E1B1B]'}">
+              <div class="flex items-start gap-3 mb-3">
+                <span class="text-2xl">${s.feedback.correct ? '✅' : '❌'}</span>
+                <div class="min-w-0">
+                  <div class="font-black text-base">${s.feedback.message}</div>
+                  <div class="text-sm font-bold opacity-90 mt-0.5 thai-text">${s.feedback.detail}</div>
+                </div>
+              </div>
+              <button onclick="nextExercise()" class="duo-btn w-full py-3.5 rounded-2xl text-white font-black text-sm uppercase tracking-wider ${s.feedback.correct ? 'bg-[#58CC02] border-b-4 border-[#46A302]' : 'bg-[#FF4B4B] border-b-4 border-[#D63030]'}">
+                Doorgaan
+              </button>
+            </div>
+          ` : ex.type !== 'match_pairs' ? `
+            <div class="p-4 border-t-2 border-slate-100 bg-white">
+              <button
+                onclick="checkCurrentAnswer()"
+                ${canCheck ? '' : 'disabled'}
+                class="duo-btn w-full py-3.5 rounded-2xl font-black text-sm uppercase tracking-wider ${canCheck ? 'bg-[#58CC02] border-b-4 border-[#46A302] text-white' : 'bg-slate-200 border-b-4 border-slate-300 text-slate-400 cursor-not-allowed'}">
+                Controleer
+              </button>
+            </div>
+          ` : `
+            <div class="p-3 text-center text-xs font-bold text-slate-400 border-t border-slate-100">
+              Tik op een Thais woord links en de Nederlandse vertaling rechts
+            </div>
+          `}
+        </div>
+      `;
+    }
+
+    function renderExerciseBody(ex) {
+      const s = UI.session;
+
+      // 1. Meerkeuze Thais -> Nederlands
+      if (ex.type === 'mc_th_nl') {
+        const thaiDisp = formatThai(ex.thai);
+        const phDisp = formatPhonetic(ex.phonetic);
+        return `
+          <div class="p-4 rounded-3xl bg-slate-50 border-2 border-slate-200 flex items-center gap-3">
+            ${renderElephantSVG('happy', 56)}
+            <div class="flex-1 min-w-0">
+              <div class="thai-text text-2xl font-bold text-slate-900">${thaiDisp}</div>
+              ${AppState.settings.showPhonetics ? `<div class="text-sm font-extrabold text-sky-600 mt-0.5">${phDisp}</div>` : ''}
+              <div class="text-[11px] font-bold text-slate-400 mt-0.5">Toon: ${ex.tone}</div>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <button onclick="SpeechEngine.speak('${thaiDisp.replace(/'/g, "\\'")}', false)" class="duo-btn w-10 h-10 rounded-xl bg-[#1CB0F6] border-b-4 border-[#1899D6] text-white flex items-center justify-center text-lg">🔊</button>
+              <button onclick="SpeechEngine.speak('${thaiDisp.replace(/'/g, "\\'")}', true)" class="duo-btn w-10 h-8 rounded-xl bg-sky-100 border-b-2 border-sky-200 text-sky-700 flex items-center justify-center text-xs font-black" title="Langzaam">🐢</button>
+            </div>
+          </div>
+          <div class="space-y-2.5">
+            ${ex.options.map((opt, idx) => {
+              const sel = s.selectedOption === idx;
+              return `
+                <button onclick="selectOption(${idx})" class="duo-btn w-full p-4 rounded-2xl border-2 border-b-4 text-left font-extrabold text-sm transition-all flex items-center justify-between ${sel ? 'bg-sky-50 border-[#1CB0F6] text-sky-900' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}">
+                  <span>${opt.label}</span>
+                  <span class="w-6 h-6 rounded-lg border-2 text-xs flex items-center justify-center font-black ${sel ? 'border-[#1CB0F6] bg-[#1CB0F6] text-white' : 'border-slate-200 text-slate-400'}">${idx + 1}</span>
+                </button>
+              `;
+            }).join('')}
+          </div>
+        `;
+      }
+
+      // 2. Meerkeuze Nederlands -> Thais
+      if (ex.type === 'mc_nl_th') {
+        return `
+          <div class="p-5 rounded-3xl bg-sky-50 border-2 border-sky-200 text-center">
+            <div class="text-xs font-extrabold uppercase tracking-wider text-sky-500 mb-1">Nederlands</div>
+            <div class="text-xl font-black text-slate-900">${ex.nlPrompt}</div>
+            ${ex.note ? `<div class="text-xs font-bold text-slate-500 mt-1.5">💡 ${ex.note}</div>` : ''}
+          </div>
+          <div class="grid grid-cols-1 gap-2.5">
+            ${ex.options.map((opt, idx) => {
+              const sel = s.selectedOption === idx;
+              return `
+                <button onclick="selectOption(${idx})" class="duo-btn w-full p-4 rounded-2xl border-2 border-b-4 text-left transition-all flex items-center justify-between ${sel ? 'bg-sky-50 border-[#1CB0F6]' : 'bg-white border-slate-200 hover:bg-slate-50'}">
+                  <div>
+                    <div class="thai-text text-lg font-bold text-slate-900">${formatThai(opt.thai)}</div>
+                    ${AppState.settings.showPhonetics ? `<div class="text-xs font-extrabold text-sky-600">${formatPhonetic(opt.phonetic)}</div>` : ''}
+                  </div>
+                  <span class="text-lg opacity-70">🔊</span>
+                </button>
+              `;
+            }).join('')}
+          </div>
+        `;
+      }
+
+      // 3. Luisteroefening (Normaal + Schildpad + Visuele fallback voor apparaten zonder Thaise TTS)
+      if (ex.type === 'listen') {
+        const thaiDisp = formatThai(ex.thai);
+        const phDisp = formatPhonetic(ex.phonetic);
+        const hasVoice = SpeechEngine.hasThaiVoice();
+        return `
+          <div class="p-5 rounded-3xl bg-gradient-to-b from-sky-50 to-white border-2 border-sky-200 flex flex-col items-center gap-3">
+            <div class="flex items-center gap-3">
+              <button onclick="SpeechEngine.speak('${thaiDisp.replace(/'/g, "\\'")}', false)" class="duo-btn w-20 h-20 rounded-3xl bg-[#1CB0F6] border-b-4 border-[#1899D6] text-white text-4xl flex items-center justify-center shadow-md">🔊</button>
+              <button onclick="SpeechEngine.speak('${thaiDisp.replace(/'/g, "\\'")}', true)" class="duo-btn w-14 h-14 rounded-2xl bg-emerald-500 border-b-4 border-emerald-600 text-white text-2xl flex items-center justify-center shadow-md" title="Langzaam afspelen">🐢</button>
+            </div>
+            <div class="text-center">
+              <div class="text-xs font-extrabold text-slate-500">Tik op 🔊 (normaal) of 🐢 (langzaam)</div>
+              ${(!hasVoice || AppState.settings.showPhonetics) ? `
+                <div class="mt-2 px-3.5 py-1.5 rounded-xl bg-white border border-sky-200 text-sm font-black text-sky-700">
+                  Uitspraak: "${phDisp}"
+                </div>
+              ` : ''}
+            </div>
+          </div>
+          <div class="space-y-2.5">
+            ${ex.options.map((opt, idx) => {
+              const sel = s.selectedOption === idx;
+              return `
+                <button onclick="selectOption(${idx})" class="duo-btn w-full p-4 rounded-2xl border-2 border-b-4 text-left font-extrabold text-sm flex items-center justify-between ${sel ? 'bg-sky-50 border-[#1CB0F6] text-sky-900' : 'bg-white border-slate-200 text-slate-700'}">
+                  <span>${opt.label}</span>
+                  <span class="thai-text text-xs font-bold text-slate-400">${formatThai(opt.thai)}</span>
+                </button>
+              `;
+            }).join('')}
+          </div>
+        `;
+      }
+
+      // 4. Zin bouwen met tikbare woordblokken (Duolingo Word Bank)
+      if (ex.type === 'build_sentence') {
+        const usedUids = new Set(s.builtTokens.map(t => t.uid));
+        return `
+          <div class="p-4 rounded-3xl bg-slate-50 border-2 border-slate-200 flex items-center gap-3">
+            ${renderElephantSVG('happy', 52)}
+            <div>
+              <div class="text-xs font-extrabold text-slate-400 uppercase">Vertaal naar het Thais</div>
+              <div class="text-base font-black text-slate-900 mt-0.5">"${ex.nlPrompt}"</div>
+              ${AppState.settings.showPhonetics ? `<div class="text-xs font-bold text-sky-600 mt-1">Hint: ${formatPhonetic(ex.fullPhonetic)}</div>` : ''}
+            </div>
+          </div>
+
+          <!-- Antwoordzone -->
+          <div class="min-h-[82px] p-3 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50/70 flex flex-wrap gap-2 items-center">
+            ${s.builtTokens.length === 0 ? `<span class="text-xs font-bold text-slate-400 mx-auto">Tik hieronder op de Thaise woordblokken in de juiste volgorde...</span>` : ''}
+            ${s.builtTokens.map(tok => `
+              <button onclick="removeBuiltToken('${tok.uid}')" class="duo-btn px-3.5 py-2 rounded-2xl bg-sky-100 border-2 border-b-4 border-[#1CB0F6] text-sky-900 thai-text font-bold text-base animate-bounce-in">
+                ${tok.text}
+              </button>
+            `).join('')}
+          </div>
+
+          <!-- Woordbank -->
+          <div class="flex flex-wrap justify-center gap-2 pt-2">
+            ${ex.bank.map(tok => {
+              const used = usedUids.has(tok.uid);
+              return `
+                <button
+                  onclick="tapBankToken('${tok.uid}')"
+                  ${used ? 'disabled' : ''}
+                  class="duo-btn px-4 py-2.5 rounded-2xl border-2 border-b-4 thai-text font-bold text-base transition-all ${used ? 'bg-slate-100 border-slate-200 text-transparent select-none' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}">
+                  ${tok.text}
+                </button>
+              `;
+            }).join('')}
+          </div>
+        `;
+      }
+
+      // 5. Invuloefening (Cloze / Actief ophalen)
+      if (ex.type === 'cloze') {
+        return `
+          <div class="p-4 rounded-3xl bg-amber-50 border-2 border-amber-200 space-y-2.5">
+            <div class="text-xs font-extrabold uppercase text-amber-700">Nederlands: "${ex.nlPrompt}"</div>
+            <div class="flex flex-wrap items-center gap-2 pt-1">
+              ${ex.tokens.map((t, i) => i === ex.blankIdx
+                ? `<span class="px-4 py-1.5 rounded-xl bg-white border-2 border-dashed border-amber-400 text-amber-700 thai-text font-black text-lg min-w-[70px] text-center">${s.selectedOption !== null ? ex.options[s.selectedOption].text : '___'}</span>`
+                : `<span class="px-2.5 py-1 rounded-xl bg-white/80 text-slate-800 thai-text font-bold text-lg">${t}</span>`
+              ).join('')}
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2.5">
+            ${ex.options.map((opt, idx) => {
+              const sel = s.selectedOption === idx;
+              return `
+                <button onclick="selectOption(${idx})" class="duo-btn p-4 rounded-2xl border-2 border-b-4 text-center transition-all ${sel ? 'bg-sky-50 border-[#1CB0F6]' : 'bg-white border-slate-200'}">
+                  <div class="thai-text text-lg font-bold text-slate-900">${opt.text}</div>
+                  ${AppState.settings.showPhonetics && opt.ph ? `<div class="text-xs font-bold text-sky-600 mt-0.5">${opt.ph}</div>` : ''}
+                </button>
+              `;
+            }).join('')}
+          </div>
+        `;
+      }
+
+      // 6. Paren Matchen (4 paren Thais <-> Nederlands)
+      if (ex.type === 'match_pairs') {
+        const ms = s.matchState;
+        return `
+          <div class="grid grid-cols-2 gap-3 ${ms.wrongFlash ? 'animate-shake' : ''}">
+            <!-- Linkerkolom: Thais -->
+            <div class="space-y-2.5">
+              ${ex.leftItems.map(item => {
+                const matched = ms.matchedIds.includes(item.id);
+                const selected = ms.selectedLeft === item.id;
+                const cls = matched
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-400 opacity-50'
+                  : selected && ms.wrongFlash
+                    ? 'bg-rose-50 border-rose-400 text-rose-700'
+                    : selected
+                      ? 'bg-sky-50 border-[#1CB0F6] text-sky-900'
+                      : 'bg-white border-slate-200 text-slate-800';
+                return `
+                  <button onclick="tapMatchCard('left', '${item.id}')" ${matched ? 'disabled' : ''} class="duo-btn w-full min-h-[72px] p-3 rounded-2xl border-2 border-b-4 text-center flex flex-col items-center justify-center ${cls}">
+                    <span class="thai-text font-bold text-base leading-tight">${formatThai(item.thai)}</span>
+                    ${AppState.settings.showPhonetics ? `<span class="text-[11px] font-bold text-sky-600 mt-0.5">${formatPhonetic(item.phonetic)}</span>` : ''}
+                  </button>
+                `;
+              }).join('')}
+            </div>
+
+            <!-- Rechterkolom: Nederlands -->
+            <div class="space-y-2.5">
+              ${ex.rightItems.map(item => {
+                const matched = ms.matchedIds.includes(item.id);
+                const selected = ms.selectedRight === item.id;
+                const cls = matched
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-400 opacity-50'
+                  : selected && ms.wrongFlash
+                    ? 'bg-rose-50 border-rose-400 text-rose-700'
+                    : selected
+                      ? 'bg-sky-50 border-[#1CB0F6] text-sky-900'
+                      : 'bg-white border-slate-200 text-slate-800';
+                return `
+                  <button onclick="tapMatchCard('right', '${item.id}')" ${matched ? 'disabled' : ''} class="duo-btn w-full min-h-[72px] p-3 rounded-2xl border-2 border-b-4 text-center flex items-center justify-center font-extrabold text-xs leading-snug ${cls}">
+                    ${item.nl}
+                  </button>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        `;
+      }
+
+      return '';
+    }
+
+    // Afrondingsscherm na een Les, Examen of Herhaalronde
+    function renderSessionSummary() {
+      const s = UI.session;
+      const sum = s.summary;
+      const isExamFail = s.mode === 'exam' && !sum.examPassed;
+
+      return `
+        <div class="min-h-screen flex flex-col justify-between p-6 bg-white text-center">
+          <div class="pt-6 space-y-4 animate-bounce-in">
+            <div class="animate-float">${renderElephantSVG(isExamFail ? 'sad' : 'happy', 110)}</div>
+
+            ${s.mode === 'exam' ? `
+              <div class="inline-block px-4 py-1.5 rounded-full font-black text-xs uppercase tracking-wider ${sum.examPassed ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-700'}">
+                ${sum.examPassed ? `🏆 Niveau ${s.levelId} Examen Gehaald!` : `Examen Nog Niet Gehaald (Min. 80% nodig)`}
+              </div>
+              <h2 class="text-2xl font-black text-slate-900">
+                ${sum.examPassed
+                  ? (s.levelId < 20 ? `Niveau ${s.levelId + 1} is nu vrijgespeeld! 🎉` : 'Alle 20 niveaus voltooid! 👑')
+                  : 'Je bent er bijna — probeer het gerust opnieuw!'}
+              </h2>
+            ` : `
+              <div class="inline-block px-4 py-1.5 rounded-full bg-emerald-100 text-emerald-800 font-black text-xs uppercase tracking-wider">
+                ${s.mode === 'hearts' ? '❤️ +2 Hartjes Verdiend!' : 'Opdracht Voltooid!'}
+              </div>
+              <h2 class="text-2xl font-black text-slate-900">
+                ${s.wrongCount === 0 ? 'Foutloze ronde! ✨' : 'Geweldig geoefend! 🎉'}
+              </h2>
+            `}
+
+            <p class="text-sm font-bold text-slate-500">
+              ${s.mode === 'exam' && !sum.examPassed
+                ? 'Herhaal even de moeilijke woorden via de SRS-tab en slaag bij je volgende poging!'
+                : 'Je voortgang en SRS-geheugen zijn automatisch opgeslagen.'}
+            </p>
+
+            <!-- Resultaat Tegels -->
+            <div class="grid grid-cols-3 gap-2.5 pt-3">
+              <div class="p-3.5 rounded-2xl border-2 border-amber-200 bg-amber-50">
+                <div class="text-[11px] font-extrabold uppercase text-amber-600">XP</div>
+                <div class="text-xl font-black text-amber-700 mt-0.5">+${sum.earnedXp}</div>
+              </div>
+              <div class="p-3.5 rounded-2xl border-2 border-emerald-200 bg-emerald-50">
+                <div class="text-[11px] font-extrabold uppercase text-emerald-600">Score</div>
+                <div class="text-xl font-black text-emerald-700 mt-0.5">${sum.accuracy}%</div>
+              </div>
+              <div class="p-3.5 rounded-2xl border-2 border-sky-200 bg-sky-50">
+                <div class="text-[11px] font-extrabold uppercase text-sky-600">Gems</div>
+                <div class="text-xl font-black text-sky-700 mt-0.5">+${sum.earnedGems} 💎</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="space-y-2.5 pb-4">
+            ${isExamFail ? `
+              <button onclick="startExamSession(${s.levelId})" class="duo-btn w-full py-4 rounded-2xl bg-[#FFC800] border-b-4 border-[#D9A600] text-amber-950 font-black text-sm uppercase tracking-wider">Opnieuw Examen Doen</button>
+            ` : ''}
+            <button onclick="UI.session = null; ${sum.examPassed && s.levelId < 20 ? `UI.expandedLevel = ${s.levelId + 1};` : ''} render();" class="duo-btn w-full py-4 rounded-2xl bg-[#58CC02] border-b-4 border-[#46A302] text-white font-black text-sm uppercase tracking-wider">
+              Verder naar Leerpad
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    // -------------------------
+    // 11. INSTELLINGEN & BACK-UP ACTIES
+    // -------------------------
+    function switchTab(tabId) {
+      SoundFX.pop();
+      UI.tab = tabId;
+      render();
+    }
+
+    function toggleLevelExpand(levelId) {
+      SoundFX.pop();
+      const currentlyExpanded = UI.expandedLevel !== null ? UI.expandedLevel === levelId : levelId === AppState.unlockedLevel;
+      UI.expandedLevel = currentlyExpanded ? -1 : levelId;
+      render();
+    }
+
+    function toggleGender() {
+      SoundFX.pop();
+      AppState.settings.gender = AppState.settings.gender === 'male' ? 'female' : 'male';
+      saveState();
+      showToast(AppState.settings.gender === 'male' ? 'Ingesteld op Man (ครับ / ผม)' : 'Ingesteld op Vrouw (ค่ะ / ฉัน)', 'info');
+      render();
+    }
+
+    function togglePhonetics() {
+      SoundFX.pop();
+      AppState.settings.showPhonetics = !AppState.settings.showPhonetics;
+      saveState();
+      showToast(AppState.settings.showPhonetics ? 'Fonetische uitspraak AAN' : 'Fonetische uitspraak UIT (echt Thais schrift!)', 'info');
+      render();
+    }
+
+    function toggleSound() {
+      AppState.settings.soundOn = !AppState.settings.soundOn;
+      saveState();
+      if (AppState.settings.soundOn) SoundFX.pop();
+      render();
+    }
+
+    function togglePreviewUnlock() {
+      SoundFX.pop();
+      AppState.settings.unlockAllPreview = !AppState.settings.unlockAllPreview;
+      saveState();
+      showToast(AppState.settings.unlockAllPreview ? '🔓 Alle 20 niveaus tijdelijk open om te bekijken!' : '🔒 Normaal progressief leerpad hersteld.', 'info');
+      render();
+    }
+
+    // Export JSON via execCommand('copy') (veilig voor iframes en mobiel)
+    function openExportModal() {
+      const jsonStr = JSON.stringify(AppState, null, 2);
+      openModal(`
+        <div class="p-5 space-y-3">
+          <h3 class="text-lg font-black text-slate-800">📤 Voortgang Exporteren</h3>
+          <p class="text-xs text-slate-500">Kopieer deze JSON-code en bewaar hem om je voortgang op een ander apparaat te herstellen.</p>
+          <textarea id="export-textarea" readonly class="w-full h-40 p-3 rounded-2xl bg-slate-50 border-2 border-slate-200 text-[11px] font-mono text-slate-700">${jsonStr.replace(/</g, '&lt;')}</textarea>
+          <div class="flex gap-2">
+            <button onclick="copyExportJson()" class="duo-btn flex-1 py-3 rounded-2xl bg-[#58CC02] border-b-4 border-[#46A302] text-white font-extrabold text-sm">Kopieer JSON</button>
+            <button onclick="closeModal()" class="duo-btn px-4 py-3 rounded-2xl bg-slate-100 border-b-4 border-slate-300 text-slate-700 font-extrabold text-sm">Sluit</button>
+          </div>
+        </div>
+      `);
+    }
+
+    function copyExportJson() {
+      const ta = document.getElementById('export-textarea');
+      if (!ta) return;
+      ta.select();
+      ta.setSelectionRange(0, 999999);
+      try {
+        document.execCommand('copy');
+        showToast('Voortgang gekopieerd naar klembord!', 'success');
+      } catch (e) {
+        showToast('Selecteer en kopieer de tekst handmatig.', 'info');
+      }
+    }
+
+    function openImportModal() {
+      openModal(`
+        <div class="p-5 space-y-3">
+          <h3 class="text-lg font-black text-slate-800">📥 Voortgang Importeren</h3>
+          <p class="text-xs text-slate-500">Plak hier je eerder geëxporteerde SawasdeeLingo JSON-code.</p>
+          <textarea id="import-textarea" placeholder='{"unlockedLevel": 1, ...}' class="w-full h-36 p-3 rounded-2xl bg-slate-50 border-2 border-slate-200 text-xs font-mono text-slate-700"></textarea>
+          <div class="flex gap-2">
+            <button onclick="applyImportJson()" class="duo-btn flex-1 py-3 rounded-2xl bg-[#1CB0F6] border-b-4 border-[#1899D6] text-white font-extrabold text-sm">Herstel Voortgang</button>
+            <button onclick="closeModal()" class="duo-btn px-4 py-3 rounded-2xl bg-slate-100 border-b-4 border-slate-300 text-slate-700 font-extrabold text-sm">Annuleer</button>
+          </div>
+        </div>
+      `);
+    }
+
+    function applyImportJson() {
+      const ta = document.getElementById('import-textarea');
+      if (!ta || !ta.value.trim()) return;
+      try {
+        const parsed = JSON.parse(ta.value.trim());
+        if (typeof parsed.unlockedLevel !== 'number') throw new Error('Ongeldig formaat');
+        const def = createDefaultState();
+        AppState = { ...def, ...parsed, settings: { ...def.settings, ...(parsed.settings || {}) } };
+        saveState();
+        closeModal();
+        SoundFX.complete();
+        showToast('✅ Voortgang succesvol geïmporteerd!', 'success');
+        render();
+      } catch (e) {
+        showToast('❌ Ongeldige JSON-code. Controleer je plaktekst.', 'error');
+      }
+    }
+
+    function confirmResetProgress() {
+      openModal(`
+        <div class="p-6 text-center space-y-4">
+          <div class="text-4xl">⚠️</div>
+          <h3 class="text-lg font-black text-slate-800">Alle voortgang wissen?</h3>
+          <p class="text-sm text-slate-600">Je begint weer op Niveau 1 met 0 XP. Dit kan niet ongedaan worden gemaakt (tenzij je eerst een JSON back-up exporteert).</p>
+          <div class="space-y-2 pt-1">
+            <button onclick="executeResetProgress()" class="duo-btn w-full py-3 rounded-2xl bg-[#FF4B4B] border-b-4 border-[#D63030] text-white font-extrabold text-sm">Ja, wis alles</button>
+            <button onclick="closeModal()" class="duo-btn w-full py-3 rounded-2xl bg-slate-100 border-b-4 border-slate-300 text-slate-700 font-extrabold text-sm">Annuleren</button>
+          </div>
+        </div>
+      `);
+    }
+
+    function executeResetProgress() {
+      localStorage.removeItem(STORAGE_KEY);
+      AppState = createDefaultState();
+      UI.expandedLevel = 1;
+      saveState();
+      closeModal();
+      showToast('Voortgang gewist. Succes met je nieuwe start!', 'info');
+      render();
+    }
+
+    // -------------------------
+    // 12. INITIALISATIE BIJ OPSTARTEN
+    // -------------------------
+    window.addEventListener('DOMContentLoaded', () => {
+      syncDailyAndHearts();
+      render();
+      // Toon eenmalig de korte welkomstrondleiding voor nieuwe gebruikers
+      if (!AppState.seenWelcomeTour) {
+        setTimeout(() => showTourModal(0), 350);
+      }
+    });
+  </script>
+</body>
+</html>
